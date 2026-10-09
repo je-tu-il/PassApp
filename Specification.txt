@@ -1,0 +1,50 @@
+Spécifications Techniques : Gestionnaire de Mots de Passe Multiplateforme
+
+1. Définition et Périmètre Architecturale
+The architecture defines a decentralized, local-first password manager infrastructure. L'application garantit une souveraineté cryptographique totale sur les données, opère une synchronisation réseau asynchrone des coffres-forts via les fournisseurs de stockage grand public sans composant backend propriétaire, et orchestre le déchiffrement via les modules matériels de sécurité (FaceID, Windows Hello, TPM).
+
+2. Implémentation Cryptographique Bas Niveau
+La sécurité matérielle et logicielle repose sur des standards stricts pour prévenir l'exfiltration de clés en mémoire et le craquage hors-ligne.
+Dérivation de Clé (KDF) : Argon2id. Calibré pour infliger des pénalités massives de calcul et de mémoire aux processeurs graphiques (GPU) et circuits intégrés spécifiques (ASIC). Les paramètres (itérations, mémoire, parallélisme) sont encodés dans l'en-tête du fichier.
+Chiffrement Symétrique : AES-256-GCM exploité via la bibliothèque C native libsodium. Le mode Galois/Counter Mode garantit la confidentialité des blocs et génère un tag d'authentification MAC validant l'intégrité du fichier avant toute tentative de lecture.
+Isolation Mémoire (Zeroing) : Délégation de la logique de déchiffrement à un module Rust compilé en WebAssembly. L'espace d'adressage mémoire linéaire de WebAssembly permet d'écraser manuellement les tampons cryptographiques par des zéros immédiatement après l'injection, contournant la gestion imprévisible du Garbage Collector des moteurs JavaScript (V8/JavaScriptCore).
+
+3. Topologie Réseau et Résolution des Conflits
+Le modèle de données s'affranchit d'un serveur central de base de données en s'appuyant sur des protocoles de synchronisation de fichiers de bout en bout.
+
+3.1. Vecteurs de Synchronisation
+Environnement Cible
+Infrastructure et Protocole
+iOS / macOS
+Exploitation du conteneur iCloud Drive. Interaction via NSMetadataQuery pour capter les événements de modification distants en arrière-plan.
+Windows
+Surveillance du système de fichiers local ciblant %USERPROFILE%\iCloudDrive. Déclenchements asynchrones via les API natives Windows.
+Linux
+Replication peer-to-peer via Syncthing ou validation de versions via un dépôt Git privé en SSH.
+
+
+3.2. Modèle de Données KDBX et Mécanique CRDT
+Une base SQLite standard se corrompt lors d'une synchronisation multi-clients. Le coffre adopte une structure de données arborescente (inspirée du format KDBX) où chaque entrée, dossier et champ possède un UUID persistant et un horodatage de dernière modification (Last-Modified-Time). En cas de conflit fichier, l'application charge les deux états et procède à une fusion déterministe champ par champ en privilégiant l'horodatage le plus récent. Un historique des 3 dernières itérations est conservé localement sous format .bak.
+
+4. Proxy d'Anonymisation (Raspberry Pi 5)
+La récupération des métadonnées visuelles expose structurellement le réseau de l'utilisateur. Le serveur Raspberry Pi 5 exécute un démon (Nginx ou Squid Proxy) avec restriction TLS stricte. L'application envoie des requêtes HTTP chiffrées au nœud Raspberry Pi qui relaye la requête de téléchargement du favicon au serveur cible. L'adresse IP publique exposée aux tiers est celle du nœud proxy, préservant l'anonymat de l'appareil client, répondant ainsi à l'exigence d'une infrastructure zéro-coût auto-hébergée.
+
+5. Stratégie de Compilation Multiplateforme
+La séparation des responsabilités impose l'utilisation de frameworks spécifiques aux plateformes pour un accès privilégié aux API système.
+Système Mobile (iOS) : Implémentation en Swift natif (SwiftUI). Indispensable pour l'extension de fournisseur d'informations d'identification (Autofill Credential Provider) et les requêtes asynchrones LocalAuthentication vers la Secure Enclave. Processus de distribution CI/CD redirigé vers des builds .ipa signés localement via AltStore ou SideStore.
+Système Desktop (Tauri) : Couche de présentation réactive (React, TypeScript, Zustand pour le state management) propulsée par un moteur Rust natif gérant les appels système lourds (cryptographie, file watcher) via l'interface FFI.
+
+6. Protocole de Tests et Vérification de Conformité
+The development requires segmented physical validation.
+Noyau Cryptographique :
+Objectif : Évaluation de l'intégrité de la mémoire WASM.
+Critère : Détection d'erreurs mémoire (Valgrind) et validation des vecteurs de test officiels AES-256-GCM.
+Logique CRDT et Proxy :
+Objectif : Validation du routage Raspberry Pi 5 et fusion des UUID.
+Critère : Analyse des paquets sortants (Wireshark) confirmant le masquage IP et résolution réussie d'un conflit de base de données à double écriture.
+Matériel Desktop :
+Objectif : Tests de contrainte sur l'environnement d'exécution Tauri.
+Critère : Exécution des builds sur Lenovo ThinkPad T480 et Lenovo V14. Vérification du vidage du presse-papiers et des restrictions de capture d'écran Windows (SetWindowDisplayAffinity).
+Écosystème Apple :
+Objectif : Tests de rafraîchissement d'application en arrière-plan.
+Critère : Renouvellement de signature via AltStore/SideStore, validation biométrique FaceID et interfaçage avec le clavier natif iOS.

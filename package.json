@@ -1,0 +1,18 @@
+{
+  "name": "passapp-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev --prefix apps/desktop",
+    "build": "npm run build --prefix apps/desktop",
+    "lint": "npm run lint --prefix apps/desktop",
+    "build:contracts": "npm run build --prefix packages/contracts",
+    "tauri": "npm run tauri --prefix apps/desktop",
+    "test": "cargo test --workspace"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

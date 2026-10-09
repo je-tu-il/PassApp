@@ -1,0 +1,10 @@
+[package]
+name = "passapp-integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+passapp-crypto-core = { path = "../crates/crypto-core" }
+passapp-sync-core = { path = "../crates/sync-core" }
+serde_json = "1.0"

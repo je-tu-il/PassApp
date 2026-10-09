@@ -1,0 +1,35 @@
+# Dépendances Node & builds frontend
+node_modules/
+dist/
+dist-ssr/
+build/
+*.local
+
+# Builds Rust & Cargo
+target/
+**/*.rs.bk
+
+# Coffres locaux & sauvegardes
+*.passapp
+*.tmp
+*.bak
+*.bak[0-9]*
+vault.demo.json
+
+# Système & IDE
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.user
+
+# Certificats TLS locaux
+deploy/proxy/certs/*.pem
+deploy/proxy/cache/
+
+# Environnement & secrets
+.env
+.env.*
+!.env.example

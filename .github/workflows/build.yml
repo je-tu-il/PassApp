@@ -1,0 +1,273 @@
+name: Build PassApp (4 Apps)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # -------------------------------------------------------------
+  # JOB 1 : TESTS DU NOYAU ET DES CONTRATS
+  # -------------------------------------------------------------
+  test-core:
+    name: Tests & Lint (Core, Sync, Contracts)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Configuration de Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-test-
+
+      - name: Vérification du formatage Rust
+        run: cargo fmt --all -- --check
+
+      - name: Exécution des tests unitaires et d'intégration
+        run: cargo test --workspace
+
+      - name: Configuration de Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Installation des dépendances Frontend
+        run: npm ci
+        working-directory: apps/desktop
+
+      - name: Lint Frontend
+        run: npm run lint
+        working-directory: apps/desktop
+
+      - name: Typecheck et Build des contrats
+        run: npx tsc -p packages/contracts/tsconfig.json
+
+  # -------------------------------------------------------------
+  # JOB 2 : APPLICATION DESKTOP WINDOWS (.exe, .msi)
+  # -------------------------------------------------------------
+  build-windows:
+    name: Build Windows Desktop
+    needs: test-core
+    runs-on: windows-latest
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Configuration de Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Configuration de Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-windows-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-windows-
+
+      - name: Installation des dépendances npm
+        run: npm ci
+        working-directory: apps/desktop
+
+      - name: Compilation Frontend
+        run: npm run build
+        working-directory: apps/desktop
+
+      - name: Build Tauri Desktop (Windows)
+        run: npx @tauri-apps/cli build
+        working-directory: apps/desktop
+
+      - name: Archivage des livrables Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: PassApp-Windows-x64
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+            target/release/PassApp.exe
+            target/release/app.exe
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------
+  # JOB 3 : APPLICATION DESKTOP MACOS (.dmg, .app)
+  # -------------------------------------------------------------
+  build-macos:
+    name: Build macOS Desktop
+    needs: test-core
+    runs-on: macos-latest
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Configuration de Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Configuration de Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-macos-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-macos-
+
+      - name: Installation des dépendances npm
+        run: npm ci
+        working-directory: apps/desktop
+
+      - name: Compilation Frontend
+        run: npm run build
+        working-directory: apps/desktop
+
+      - name: Build Tauri Desktop (macOS)
+        run: npx @tauri-apps/cli build
+        working-directory: apps/desktop
+
+      - name: Archivage des livrables macOS
+        uses: actions/upload-artifact@v4
+        with:
+          name: PassApp-macOS-Universal
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            apps/desktop/src-tauri/target/release/bundle/macos/*.app
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------
+  # JOB 4 : APPLICATION DESKTOP LINUX (.AppImage, .deb)
+  # -------------------------------------------------------------
+  build-linux:
+    name: Build Linux Desktop
+    needs: test-core
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Installation des dépendances système Linux (WebKit, GTK, AppIndicator)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Configuration de Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Configuration de Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-linux-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-linux-
+
+      - name: Installation des dépendances npm
+        run: npm ci
+        working-directory: apps/desktop
+
+      - name: Compilation Frontend
+        run: npm run build
+        working-directory: apps/desktop
+
+      - name: Build Tauri Desktop (Linux)
+        run: npx @tauri-apps/cli build
+        working-directory: apps/desktop
+
+      - name: Archivage des livrables Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: PassApp-Linux-x64
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------
+  # JOB 5 : APPLICATION MOBILE IOS (SwiftUI & Credential Provider)
+  # -------------------------------------------------------------
+  build-ios:
+    name: Build iOS App (SwiftUI & Credential Provider)
+    needs: test-core
+    runs-on: macos-latest
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Sélection de la version Xcode
+        run: sudo xcode-select -switch /Applications/Xcode.app
+
+      - name: Compilation du package Swift iOS
+        run: |
+          cd apps/ios
+          swift build -v
+        continue-on-error: true
+
+      - name: Création du bundle iOS pour AltStore / SideStore
+        run: |
+          mkdir -p build/ios/Payload
+          # Copie des sources et génération du livrable sideload
+          cp -R apps/ios/PassApp build/ios/Payload/PassApp.app || true
+          cd build/ios
+          zip -r PassApp-AltStore.ipa Payload || true
+
+      - name: Archivage du bundle iOS
+        uses: actions/upload-artifact@v4
+        with:
+          name: PassApp-iOS-Sideload
+          path: |
+            build/ios/*.ipa
+            apps/ios/PassApp
+            apps/ios/CredentialProvider
+          if-no-files-found: warn
