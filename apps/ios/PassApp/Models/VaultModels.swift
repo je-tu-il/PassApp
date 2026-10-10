@@ -7,6 +7,7 @@ public struct VaultEntry: Identifiable, Codable, Equatable {
     public var password: String?
     public var url: String?
     public var notes: String?
+    public var totpSecret: String?
     public var category: String
     public var favorite: Bool
     public var updatedAt: UInt64
@@ -18,6 +19,7 @@ public struct VaultEntry: Identifiable, Codable, Equatable {
         case password
         case url
         case notes
+        case totpSecret = "totp_secret"
         case category
         case favorite
         case updatedAt = "updated_at"
@@ -30,6 +32,7 @@ public struct VaultEntry: Identifiable, Codable, Equatable {
         password: String? = nil,
         url: String? = nil,
         notes: String? = nil,
+        totpSecret: String? = nil,
         category: String = "Personnel",
         favorite: Bool = false,
         updatedAt: UInt64 = UInt64(Date().timeIntervalSince1970)
@@ -40,6 +43,7 @@ public struct VaultEntry: Identifiable, Codable, Equatable {
         self.password = password
         self.url = url
         self.notes = notes
+        self.totpSecret = totpSecret
         self.category = category
         self.favorite = favorite
         self.updatedAt = updatedAt

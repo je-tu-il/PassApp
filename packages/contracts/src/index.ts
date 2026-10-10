@@ -13,6 +13,7 @@ export interface VaultEntry {
   password?: string
   url?: string
   notes?: string
+  totp_secret?: string
   category: EntryCategory
   favorite: boolean
   updated_at: number

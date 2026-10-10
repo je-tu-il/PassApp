@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>PassApp</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- EN-TÊTE -->
+    <header class="popup-header">
+      <div class="brand">
+        <span class="brand-icon">🛡️</span>
+        <span class="brand-name">PassApp</span>
+      </div>
+      <div id="current-domain-badge" class="domain-badge" title="Site actuellement ouvert">
+        Chargement...
+      </div>
+    </header>
+
+    <!-- ONGLETS DE NAVIGATION -->
+    <nav class="popup-tabs">
+      <button class="tab-btn active" data-tab="tab-logins">🔑 Identifiants</button>
+      <button class="tab-btn" data-tab="tab-generator">🎲 Générateur</button>
+      <button class="tab-btn" data-tab="tab-sync">⚙️ Coffre</button>
+    </nav>
+
+    <!-- ONGLET 1 : IDENTIFIANTS -->
+    <section id="tab-logins" class="tab-pane active">
+      <div class="search-row">
+        <input type="text" id="vault-search-input" placeholder="Rechercher un identifiant..." />
+      </div>
+
+      <div id="matching-section">
+        <div class="section-title">Comptes suggérés pour ce site :</div>
+        <div id="matching-list" class="entries-list"></div>
+      </div>
+
+      <div id="all-section" class="hidden">
+        <div class="section-title">Résultats de recherche :</div>
+        <div id="all-list" class="entries-list"></div>
+      </div>
+
+      <div id="empty-notice" class="empty-state hidden">
+        <p>Aucun identifiant trouvé pour ce site.</p>
+        <small>Ajoutez des identifiants dans l'onglet <b>Coffre</b> ou ouvrez l'application PassApp.</small>
+      </div>
+    </section>
+
+    <!-- ONGLET 2 : GÉNÉRATEUR DE MOT DE PASSE -->
+    <section id="tab-generator" class="tab-pane">
+      <div class="gen-preview">
+        <span id="gen-result">MotDePasse...</span>
+        <button id="gen-copy-btn" class="icon-btn" title="Copier">📋</button>
+        <button id="gen-refresh-btn" class="icon-btn" title="Régénérer">🔄</button>
+      </div>
+
+      <div class="gen-controls">
+        <label class="slider-label">
+          <span>Longueur : <b id="gen-length-val">18</b> car.</span>
+          <input type="range" id="gen-length" min="8" max="40" value="18" />
+        </label>
+        <label class="check-label">
+          <input type="checkbox" id="gen-upper" checked /> Majuscules (A-Z)
+        </label>
+        <label class="check-label">
+          <input type="checkbox" id="gen-lower" checked /> Minuscules (a-z)
+        </label>
+        <label class="check-label">
+          <input type="checkbox" id="gen-digits" checked /> Chiffres (0-9)
+        </label>
+        <label class="check-label">
+          <input type="checkbox" id="gen-symbols" checked /> Symboles (!@#$)
+        </label>
+      </div>
+    </section>
+
+    <!-- ONGLET 3 : COFFRE & IMPORTATION -->
+    <section id="tab-sync" class="tab-pane">
+      <div class="sync-info">
+        <h4>Synchronisation de votre coffre</h4>
+        <p>Importez votre sauvegarde PassApp (JSON) ou vos exports de navigateurs pour activer le remplissage automatique sur toutes vos pages web.</p>
+      </div>
+
+      <div class="import-area">
+        <label class="upload-btn">
+          📂 Charger une sauvegarde (JSON / CSV)
+          <input type="file" id="import-file" accept=".json,.csv" style="display:none" />
+        </label>
+        <span id="sync-count-tag" class="count-tag">0 identifiant(s) en mémoire</span>
+      </div>
+
+      <button id="clear-vault-btn" class="danger-btn">Vider le coffre de l'extension</button>
+    </section>
+
+    <!-- PIED DE PAGE -->
+    <footer class="popup-footer">
+      <small>Raccourci de remplissage : <kbd>Ctrl+Shift+L</kbd></small>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

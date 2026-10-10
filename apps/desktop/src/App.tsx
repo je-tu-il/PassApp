@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { type VaultEntry } from './contracts'
+import { generateTotpCode, getTotpRemainingSeconds, parseOtpAuthUri } from './totp'
+import { parseUniversalImport, type ImportedItem } from './importer'
 import './App.css'
 
 type AppStatus = {
@@ -17,6 +19,7 @@ type BackendVaultEntry = {
   password?: string | null
   url?: string | null
   notes?: string | null
+  totp_secret?: string | null
   category: string
   favorite: boolean
   updated_at: number
@@ -29,7 +32,7 @@ type OpenVaultResult = {
 }
 
 type SortOption = 'title-asc' | 'title-desc' | 'category' | 'recent'
-type ActiveFilter = 'all' | 'favorites' | 'Personnel' | 'Travail' | 'Finance'
+type ActiveFilter = 'all' | 'favorites' | 'totp' | 'Personnel' | 'Travail' | 'Finance'
 type AccentColor = 'emerald' | 'amber' | 'sapphire' | 'amethyst' | 'ruby'
 type ThemeMode = 'dark' | 'light'
 
@@ -75,6 +78,7 @@ function fromBackendEntry(entry: BackendVaultEntry): VaultEntry {
     password: entry.password || undefined,
     url: entry.url || undefined,
     notes: entry.notes || undefined,
+    totpSecret: entry.totp_secret || undefined,
     category: (entry.category as 'Finance' | 'Travail' | 'Personnel') || 'Personnel',
     favorite: entry.favorite,
     updatedAt: formatted,
@@ -203,6 +207,26 @@ function App() {
   const [isAddEntryOpen, setIsAddEntryOpen] = useState(false)
   const [isEditEntryOpen, setIsEditEntryOpen] = useState(false)
   const [isGeneratorOpen, setIsGeneratorOpen] = useState(false)
+  const [isImportOpen, setIsImportOpen] = useState(false)
+
+  // TOTP Authenticator en direct
+  const [totpCodes, setTotpCodes] = useState<Record<string, string>>({})
+  const [totpCountdown, setTotpCountdown] = useState<number>(30)
+
+  // Synchronisation Multi-appareils
+  const [syncFilePath, setSyncFilePath] = useState<string>(() => {
+    return localStorage.getItem('passapp_sync_file_path') || ''
+  })
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(() => {
+    return localStorage.getItem('passapp_last_sync_time') || null
+  })
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [syncFeedback, setSyncFeedback] = useState<{ text: string; error: boolean } | null>(null)
+
+  // Importation universelle
+  const [importRawText, setImportRawText] = useState('')
+  const [parsedImport, setParsedImport] = useState<{ format: string; items: ImportedItem[] } | null>(null)
+  const [isImporting, setIsImporting] = useState(false)
 
   // Générateur de mot de passe
   const [genConfig, setGenConfig] = useState<GeneratorConfig>({
@@ -221,6 +245,7 @@ function App() {
   const [formPassword, setFormPassword] = useState('')
   const [formUrl, setFormUrl] = useState('')
   const [formNotes, setFormNotes] = useState('')
+  const [formTotpSecret, setFormTotpSecret] = useState('')
   const [formCategory, setFormCategory] = useState<'Personnel' | 'Travail' | 'Finance'>('Personnel')
   const [formFavorite, setFormFavorite] = useState(false)
 
@@ -291,10 +316,37 @@ function App() {
     return {
       all: entries.length,
       favorites: entries.filter((e) => e.favorite).length,
+      totp: entries.filter((e) => Boolean(e.totpSecret)).length,
       Personnel: entries.filter((e) => e.category === 'Personnel').length,
       Travail: entries.filter((e) => e.category === 'Travail').length,
       Finance: entries.filter((e) => e.category === 'Finance').length,
     }
+  }, [entries])
+
+  // Mise à jour continue des codes TOTP 2FA (toutes les secondes)
+  useEffect(() => {
+    const updateTotp = async () => {
+      const remaining = getTotpRemainingSeconds()
+      setTotpCountdown(remaining)
+
+      const totpEntries = entries.filter((e) => Boolean(e.totpSecret))
+      if (totpEntries.length > 0) {
+        const nextCodes: Record<string, string> = {}
+        for (const entry of totpEntries) {
+          if (entry.totpSecret) {
+            nextCodes[entry.id] = await generateTotpCode(entry.totpSecret)
+          }
+        }
+        setTotpCodes(nextCodes)
+      }
+    }
+
+    void updateTotp()
+    const timer = setInterval(() => {
+      void updateTotp()
+    }, 1000)
+
+    return () => clearInterval(timer)
   }, [entries])
 
   // Verrouillage du coffre
@@ -325,6 +377,7 @@ function App() {
     setFormPassword(generatePasswordWithOptions(genConfig))
     setFormUrl('')
     setFormNotes('')
+    setFormTotpSecret('')
     setFormCategory('Personnel')
     setFormFavorite(false)
     setIsAddEntryOpen(true)
@@ -394,6 +447,8 @@ function App() {
       let matchesFilter = true
       if (activeFilter === 'favorites') {
         matchesFilter = entry.favorite
+      } else if (activeFilter === 'totp') {
+        matchesFilter = Boolean(entry.totpSecret)
       } else if (activeFilter !== 'all') {
         matchesFilter = entry.category === activeFilter
       }
@@ -461,7 +516,9 @@ function App() {
 
     if (isBrowserMode) {
       localStorage.setItem('passapp_browser_vault_initialized', 'true')
-      localStorage.setItem('passapp_recovery_phrase', recoveryWords.join(' '))
+      // Règle Zero-Knowledge : Ne JAMAIS conserver la phrase de récupération sur le disque
+      localStorage.removeItem('passapp_recovery_phrase')
+      setRecoveryWords([])
       setVaultExists(true)
       setIsLocked(false)
       setEntries([])
@@ -476,7 +533,9 @@ function App() {
     })
 
     if (result) {
-      localStorage.setItem('passapp_recovery_phrase', recoveryWords.join(' '))
+      // Règle Zero-Knowledge : Ne JAMAIS conserver la phrase de récupération sur le disque
+      localStorage.removeItem('passapp_recovery_phrase')
+      setRecoveryWords([])
       setVaultExists(true)
       setIsLocked(false)
       setEntries([])
@@ -554,6 +613,7 @@ function App() {
         password: formPassword || undefined,
         url: formUrl.trim() || undefined,
         notes: formNotes.trim() || undefined,
+        totpSecret: formTotpSecret.trim() || undefined,
         category: formCategory,
         favorite: formFavorite,
         updatedAt: "À l'instant",
@@ -571,6 +631,7 @@ function App() {
         password: formPassword || null,
         url: formUrl.trim() || null,
         notes: formNotes.trim() || null,
+        totp_secret: formTotpSecret.trim() || null,
         category: formCategory,
         favorite: formFavorite,
       },
@@ -594,6 +655,7 @@ function App() {
     setFormPassword(entry.password || '')
     setFormUrl(entry.url || '')
     setFormNotes(entry.notes || '')
+    setFormTotpSecret(entry.totpSecret || '')
     setFormCategory(entry.category)
     setFormFavorite(entry.favorite)
     setIsEditEntryOpen(true)
@@ -612,6 +674,7 @@ function App() {
         password: formPassword || undefined,
         url: formUrl.trim() || undefined,
         notes: formNotes.trim() || undefined,
+        totpSecret: formTotpSecret.trim() || undefined,
         category: formCategory,
         favorite: formFavorite,
         updatedAt: "À l'instant",
@@ -629,6 +692,7 @@ function App() {
         password: formPassword || null,
         url: formUrl.trim() || null,
         notes: formNotes.trim() || null,
+        totp_secret: formTotpSecret.trim() || null,
         category: formCategory,
         favorite: formFavorite,
       },
@@ -660,6 +724,7 @@ function App() {
         password: entry.password || null,
         url: entry.url || null,
         notes: entry.notes || null,
+        totp_secret: entry.totpSecret || null,
         category: entry.category,
         favorite: nextFav,
       },
@@ -668,6 +733,95 @@ function App() {
     if (updated) {
       const converted = fromBackendEntry(updated)
       setEntries(entries.map((item) => (item.id === converted.id ? converted : item)))
+    }
+  }
+
+  // Synchronisation multi-appareils (Local-First CRDT)
+  async function handleSyncWithFile() {
+    if (!syncFilePath.trim()) {
+      setSyncFeedback({ text: 'Veuillez indiquer le chemin du fichier partagé.', error: true })
+      return
+    }
+    setIsSyncing(true)
+    setSyncFeedback(null)
+    try {
+      const res = await invoke<OpenVaultResult>('sync_vault_with_file', {
+        syncFilePath: syncFilePath.trim(),
+      })
+      if (res && res.entries) {
+        setEntries(res.entries.map(fromBackendEntry))
+        const nowStr = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+        setLastSyncTime(nowStr)
+        localStorage.setItem('passapp_last_sync_time', nowStr)
+        localStorage.setItem('passapp_sync_file_path', syncFilePath.trim())
+        setSyncFeedback({
+          text: `Synchronisation réussie ! (${res.entries.length} identifiants à jour)`,
+          error: false,
+        })
+      }
+    } catch (err: unknown) {
+      setSyncFeedback({
+        text: `Erreur de synchronisation : ${typeof err === 'string' ? err : 'Fichier inaccessible'}`,
+        error: true,
+      })
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
+  // Exécution de l'importation universelle
+  async function executeUniversalImport(itemsToImport: ImportedItem[]) {
+    if (itemsToImport.length === 0) return
+    setIsImporting(true)
+    let count = 0
+    try {
+      for (const item of itemsToImport) {
+        if (!item.title && !item.username) continue
+        if (isBrowserMode) {
+          const newEntry: VaultEntry = {
+            id: `entry-${Date.now()}-${Math.random()}`,
+            title: item.title,
+            username: item.username,
+            password: item.password,
+            url: item.url,
+            notes: item.notes,
+            totpSecret: item.totpSecret,
+            category: item.category,
+            favorite: item.favorite,
+            updatedAt: "À l'instant",
+          }
+          setEntries((prev) => [newEntry, ...prev])
+          count++
+        } else {
+          await invoke('create_vault_entry', {
+            entry: {
+              title: item.title,
+              username: item.username,
+              password: item.password || null,
+              url: item.url || null,
+              notes: item.notes || null,
+              totp_secret: item.totpSecret || null,
+              category: item.category,
+              favorite: item.favorite,
+            },
+          })
+          count++
+        }
+      }
+
+      if (!isBrowserMode) {
+        const refreshed = await invoke<BackendVaultEntry[]>('get_vault_entries')
+        setEntries(refreshed.map(fromBackendEntry))
+      }
+
+      setIsImportOpen(false)
+      setParsedImport(null)
+      setImportRawText('')
+      alert(`Importation réussie : ${count} identifiants importés dans votre coffre !`)
+    } catch (err) {
+      alert(`Erreur lors de l'importation : ${err}`)
+    } finally {
+      setIsImporting(false)
     }
   }
 
@@ -1044,10 +1198,12 @@ INSTRUCTIONS DE SÉCURITÉ :
               </div>
 
               <div className="detail-note warning-note">
-                <span>⚠️</span>
+                <span>🛡️</span>
                 <div>
-                  <strong>Important : Sauvegardez ces mots hors-ligne</strong>
-                  <p>Aucun serveur ne détient vos clés. Si vous égarez votre mot de passe maître sans cette phrase, vos identifiants seront irrécupérables.</p>
+                  <strong>SÉCURITÉ ZERO-KNOWLEDGE STRICTE : Non réaffichée par la suite</strong>
+                  <p>
+                    Pour garantir l'inviolabilité de vos accès, cette phrase secrète ne sera <b>JAMAIS</b> enregistrée sur cet appareil et ne pourra <b>JAMAIS être affichée dans vos paramètres</b>. Aucun tiers ni serveur ne détient vos clés. Notez-la immédiatement sur papier ou conservez-la hors-ligne.
+                  </p>
                 </div>
               </div>
 
@@ -1196,6 +1352,13 @@ INSTRUCTIONS DE SÉCURITÉ :
           >
             <span>★</span> Favoris <b>{isLocked ? '—' : categoryCounts.favorites}</b>
           </button>
+          <button
+            className={activeFilter === 'totp' ? 'nav-item active' : 'nav-item'}
+            type="button"
+            onClick={() => setActiveFilter('totp')}
+          >
+            <span>🔑</span> Authenticator 2FA <b>{isLocked ? '—' : categoryCounts.totp}</b>
+          </button>
           <div className="nav-divider" />
           <button
             className={activeFilter === 'Personnel' ? 'nav-item active' : 'nav-item'}
@@ -1234,6 +1397,20 @@ INSTRUCTIONS DE SÉCURITÉ :
           </div>
 
           <div className="sidebar-quick-actions">
+            {!isLocked && (
+              <button
+                type="button"
+                className="theme-quick-btn"
+                onClick={() => {
+                  setIsImportOpen(true)
+                  setParsedImport(null)
+                  setImportRawText('')
+                }}
+                title="Importer des identifiants (Chrome, Bitwarden, 1Password, Google Authenticator...)"
+              >
+                📥 Importer des données
+              </button>
+            )}
             <button
               type="button"
               className="theme-quick-btn"
@@ -1266,19 +1443,35 @@ INSTRUCTIONS DE SÉCURITÉ :
                 ? 'Tous les identifiants'
                 : activeFilter === 'favorites'
                 ? 'Mes favoris'
+                : activeFilter === 'totp'
+                ? 'Authenticator 2FA (TOTP)'
                 : activeFilter}
             </h1>
           </div>
           <div className="top-actions">
             {!isLocked && (
-              <button
-                className="secondary-top-button"
-                type="button"
-                onClick={openGeneratorModal}
-                title="Générateur de mot de passe fort"
-              >
-                <span>🎲</span> Générateur
-              </button>
+              <>
+                <button
+                  className="secondary-top-button"
+                  type="button"
+                  onClick={() => {
+                    setIsImportOpen(true)
+                    setParsedImport(null)
+                    setImportRawText('')
+                  }}
+                  title="Importer des identifiants (Chrome, Bitwarden, 1Password, Google Authenticator, CSV...)"
+                >
+                  <span>📥</span> Importer
+                </button>
+                <button
+                  className="secondary-top-button"
+                  type="button"
+                  onClick={openGeneratorModal}
+                  title="Générateur de mot de passe fort"
+                >
+                  <span>🎲</span> Générateur
+                </button>
+              </>
             )}
             <button
               className={isLocked ? 'lock-button locked' : 'lock-button'}
@@ -1405,7 +1598,10 @@ INSTRUCTIONS DE SÉCURITÉ :
                       </span>
                       <span className="entry-copy">
                         <strong>{entry.title}</strong>
-                        <small>{entry.username}</small>
+                        <small>
+                          {entry.username}
+                          {entry.totpSecret && <span className="entry-totp-badge"> • 🔑 2FA</span>}
+                        </small>
                       </span>
                       <span
                         className="entry-star"
@@ -1599,6 +1795,64 @@ INSTRUCTIONS DE SÉCURITÉ :
                     </div>
                   )}
                 </div>
+
+                {/* CHAMP AUTHENTICATOR 2FA (RFC 6238) */}
+                {selectedEntry.totpSecret ? (
+                  <div className="totp-card">
+                    <div className="totp-card-header">
+                      <label>🔑 Authenticator 2FA (RFC 6238)</label>
+                      <span
+                        className={`totp-countdown-badge ${
+                          totpCountdown <= 5 ? 'danger' : totpCountdown <= 10 ? 'warning' : 'normal'
+                        }`}
+                      >
+                        ⏱️ Expire dans {totpCountdown}s
+                      </span>
+                    </div>
+
+                    <div className="totp-code-display-row">
+                      <div className="totp-digits-large">
+                        {totpCodes[selectedEntry.id]
+                          ? `${totpCodes[selectedEntry.id].slice(0, 3)} ${totpCodes[selectedEntry.id].slice(3)}`
+                          : '------'}
+                      </div>
+                      <button
+                        type="button"
+                        className="primary-btn-sm"
+                        onClick={() =>
+                          void copyToClipboard(
+                            totpCodes[selectedEntry.id] || '',
+                            `totp-${selectedEntry.id}`,
+                            'Code 2FA Authenticator',
+                          )
+                        }
+                        title="Copier le code 2FA à 6 chiffres"
+                      >
+                        {copiedKey === `totp-${selectedEntry.id}` ? '✓ Code copié !' : '📋 Copier'}
+                      </button>
+                    </div>
+
+                    <div className="totp-progress-track">
+                      <div
+                        className={`totp-progress-bar ${
+                          totpCountdown <= 5 ? 'danger' : totpCountdown <= 10 ? 'warning' : 'normal'
+                        }`}
+                        style={{ width: `${(totpCountdown / 30) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="totp-empty-cta">
+                    <span>🔑 Aucun code 2FA Authenticator configuré</span>
+                    <button
+                      type="button"
+                      className="secondary-btn-xs"
+                      onClick={() => openEditModal(selectedEntry)}
+                    >
+                      + Ajouter un code 2FA
+                    </button>
+                  </div>
+                )}
 
                 {/* CHAMP URL */}
                 {selectedEntry.url && (
@@ -1907,8 +2161,21 @@ INSTRUCTIONS DE SÉCURITÉ :
                   >
                     📥 Exporter la sauvegarde (JSON)
                   </button>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => {
+                      setIsProfileOpen(false)
+                      setIsImportOpen(true)
+                      setParsedImport(null)
+                      setImportRawText('')
+                    }}
+                    disabled={isLocked}
+                  >
+                    🌐 Importer (Chrome, Bitwarden, 1Password, 2FA...)
+                  </button>
                   <label className={`secondary-btn file-input-label ${isLocked ? 'disabled' : ''}`}>
-                    📤 Importer une sauvegarde (JSON)
+                    📤 Importer JSON PassApp
                     <input
                       type="file"
                       accept=".json"
@@ -1917,6 +2184,70 @@ INSTRUCTIONS DE SÉCURITÉ :
                       style={{ display: 'none' }}
                     />
                   </label>
+                </div>
+              </div>
+
+              {/* SYNCHRONISATION MULTI-APPAREILS */}
+              <div className="info-section">
+                <h4>Synchronisation multi-appareils (Local-First CRDT)</h4>
+                <p className="info-desc">
+                  Synchronisez votre coffre avec vos autres appareils (PC, Mac, Linux, iPhone) sans serveur tiers payant grâce au moteur de fusion CRDT chiffré de bout en bout.
+                </p>
+
+                <div className="sync-card">
+                  <div className="sync-status-row">
+                    <span className="sync-status-indicator">
+                      {syncFilePath ? '🟢 Prêt pour la synchronisation' : '⚪ Emplacement non configuré'}
+                    </span>
+                    {lastSyncTime && <small className="last-sync-tag">Dernière synchro : {lastSyncTime}</small>}
+                  </div>
+
+                  <label className="sync-input-label">
+                    <span>Chemin du coffre partagé (Cloud ou Réseau local) :</span>
+                    <input
+                      type="text"
+                      value={syncFilePath}
+                      onChange={(e) => setSyncFilePath(e.target.value)}
+                      placeholder="ex: C:\Users\Nom\OneDrive\vault.passapp ou /Users/Nom/Library/Mobile Documents/com~apple~CloudDocs/vault.passapp"
+                    />
+                  </label>
+
+                  <div className="sync-help-box">
+                    <small>
+                      💡 <b>Astuce :</b> Placez une copie de votre fichier dans un dossier synchronisé par <b>OneDrive</b>, <b>iCloud Drive</b>, <b>Google Drive</b>, <b>Dropbox</b>, ou sur un <b>NAS local</b>. Vos données y restent 100% chiffrées.
+                    </small>
+                  </div>
+
+                  <div className="sync-actions-row">
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={isSyncing || !syncFilePath}
+                      onClick={() => void handleSyncWithFile()}
+                    >
+                      {isSyncing ? 'Synchronisation en cours...' : '🔄 Synchroniser maintenant'}
+                    </button>
+                  </div>
+
+                  {syncFeedback && (
+                    <p className={syncFeedback.error ? 'form-error' : 'form-success'}>
+                      {syncFeedback.text}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* SÉCURITÉ & PHRASE SECRÈTE */}
+              <div className="info-section">
+                <h4>Sécurité & Phrase de secours</h4>
+                <div className="sealed-recovery-notice">
+                  <div className="sealed-badge-icon">🛡️</div>
+                  <div>
+                    <strong>Phrase de secours scellée (Zero-Knowledge)</strong>
+                    <p>
+                      Votre phrase de secours à 12 mots a été générée lors de la configuration initiale. Pour garantir l'inviolabilité absolue de votre coffre face aux attaques et logiciels espions, elle n'est pas conservée en clair et ne peut jamais être réaffichée ici.
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -2073,6 +2404,30 @@ INSTRUCTIONS DE SÉCURITÉ :
                 </label>
 
                 <label>
+                  Clé Secrète TOTP / 2FA Authenticator (optionnel)
+                  <input
+                    type="text"
+                    value={formTotpSecret}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setFormTotpSecret(val)
+                      if (val.trim().toLowerCase().startsWith('otpauth://')) {
+                        const parsed = parseOtpAuthUri(val)
+                        if (parsed) {
+                          if (parsed.secret) setFormTotpSecret(parsed.secret)
+                          if (!formTitle && parsed.issuer) setFormTitle(parsed.issuer)
+                          if (!formUsername && parsed.account) setFormUsername(parsed.account)
+                        }
+                      }
+                    }}
+                    placeholder="ex: JBSWY3DPEHPK3PXP ou collez une URL otpauth://..."
+                  />
+                  <small className="field-hint">
+                    Génère des codes temporaires à 6 chiffres (Google Authenticator, Bitwarden, Aegis).
+                  </small>
+                </label>
+
+                <label>
                   Adresse URL (optionnel)
                   <input
                     type="url"
@@ -2199,6 +2554,30 @@ INSTRUCTIONS DE SÉCURITÉ :
                 </label>
 
                 <label>
+                  Clé Secrète TOTP / 2FA Authenticator (optionnel)
+                  <input
+                    type="text"
+                    value={formTotpSecret}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setFormTotpSecret(val)
+                      if (val.trim().toLowerCase().startsWith('otpauth://')) {
+                        const parsed = parseOtpAuthUri(val)
+                        if (parsed) {
+                          if (parsed.secret) setFormTotpSecret(parsed.secret)
+                          if (!formTitle && parsed.issuer) setFormTitle(parsed.issuer)
+                          if (!formUsername && parsed.account) setFormUsername(parsed.account)
+                        }
+                      }
+                    }}
+                    placeholder="ex: JBSWY3DPEHPK3PXP ou collez une URL otpauth://..."
+                  />
+                  <small className="field-hint">
+                    Génère des codes temporaires à 6 chiffres (Google Authenticator, Bitwarden, Aegis).
+                  </small>
+                </label>
+
+                <label>
                   Adresse URL
                   <input
                     type="url"
@@ -2235,6 +2614,126 @@ INSTRUCTIONS DE SÉCURITÉ :
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODALE D'IMPORTATION UNIVERSELLE */}
+      {isImportOpen && (
+        <div className="modal-backdrop" onClick={() => setIsImportOpen(false)}>
+          <div className="modal-card import-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>📥 Importer des identifiants & Authenticator</h2>
+              <button className="close-button" type="button" onClick={() => setIsImportOpen(false)}>
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <p className="modal-intro">
+                Importez facilement tous vos mots de passe et codes 2FA depuis vos navigateurs ou anciens gestionnaires sans passer par des serveurs tiers.
+              </p>
+
+              <div className="supported-formats-pills">
+                <span className="format-pill">🌐 Chrome & Edge</span>
+                <span className="format-pill">🦊 Firefox</span>
+                <span className="format-pill">🍎 Safari</span>
+                <span className="format-pill">🔐 Bitwarden</span>
+                <span className="format-pill">🗝️ 1Password</span>
+                <span className="format-pill">🛡️ KeePass</span>
+                <span className="format-pill">🔑 Google Authenticator</span>
+                <span className="format-pill">💾 PassApp JSON</span>
+              </div>
+
+              <div className="import-file-dropzone">
+                <label className="file-drop-button">
+                  📂 Choisir un fichier (CSV, JSON, TXT)
+                  <input
+                    type="file"
+                    accept=".csv,.json,.txt"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+                      const text = await file.text()
+                      setImportRawText(text)
+                      const res = parseUniversalImport(text, file.name)
+                      setParsedImport({ format: res.formatDetected, items: res.items })
+                    }}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+                <span className="drop-or">ou collez le texte ci-dessous :</span>
+              </div>
+
+              <textarea
+                className="import-textarea"
+                rows={4}
+                value={importRawText}
+                placeholder="Collez ici le texte CSV, JSON ou vos URLs otpauth://totp/..."
+                onChange={(e) => {
+                  const val = e.target.value
+                  setImportRawText(val)
+                  if (val.trim()) {
+                    const res = parseUniversalImport(val)
+                    setParsedImport({ format: res.formatDetected, items: res.items })
+                  } else {
+                    setParsedImport(null)
+                  }
+                }}
+              />
+
+              {parsedImport && (
+                <div className="import-preview-box">
+                  <div className="import-preview-header">
+                    <span className="format-detected-badge">✓ {parsedImport.format}</span>
+                    <strong>{parsedImport.items.length} identifiant(s) détecté(s)</strong>
+                  </div>
+
+                  {parsedImport.items.length > 0 ? (
+                    <>
+                      <div className="preview-items-list">
+                        {parsedImport.items.slice(0, 4).map((item, idx) => (
+                          <div key={idx} className="preview-item-row">
+                            <span className="preview-title">{item.title}</span>
+                            <span className="preview-user">{item.username || '—'}</span>
+                            <span className="preview-meta">
+                              {item.password ? '🔑 Mot de passe' : ''}
+                              {item.totpSecret ? ' • ⏱️ 2FA' : ''}
+                            </span>
+                          </div>
+                        ))}
+                        {parsedImport.items.length > 4 && (
+                          <small className="more-preview-note">
+                            ... et {parsedImport.items.length - 4} autre(s) identifiant(s)
+                          </small>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        className="primary-button full-width"
+                        disabled={isImporting}
+                        onClick={() => void executeUniversalImport(parsedImport.items)}
+                      >
+                        {isImporting
+                          ? 'Importation en cours...'
+                          : `Importer ces ${parsedImport.items.length} identifiant(s)`}
+                      </button>
+                    </>
+                  ) : (
+                    <p className="no-items-warning">
+                      Aucun identifiant valide n'a pu être extrait. Vérifiez le format du fichier ou le texte collé.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button className="secondary-btn" type="button" onClick={() => setIsImportOpen(false)}>
+                Fermer
+              </button>
+            </div>
           </div>
         </div>
       )}

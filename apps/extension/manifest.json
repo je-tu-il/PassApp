@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "PassApp - Remplissage Automatique & 2FA",
+  "version": "0.1.0",
+  "description": "Gestionnaire de mots de passe souverain et générateur 2FA TOTP avec remplissage automatique discret et instantané (Ctrl+Shift+L).",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PassApp - Coffre-fort & 2FA"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "autofill": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "Remplir automatiquement les identifiants PassApp"
+    }
+  }
+}

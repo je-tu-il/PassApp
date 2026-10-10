@@ -5,6 +5,7 @@ export type VaultEntry = {
   password?: string
   url?: string
   notes?: string
+  totpSecret?: string
   category: 'Finance' | 'Travail' | 'Personnel'
   favorite: boolean
   updatedAt: string

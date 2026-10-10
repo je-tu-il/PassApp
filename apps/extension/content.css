@@ -1,0 +1,123 @@
+/* PassApp - Styles injectés dans les pages web */
+
+.passapp-field-badge {
+  position: absolute !important;
+  z-index: 2147483646 !important;
+  width: 24px !important;
+  height: 24px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  cursor: pointer !important;
+  font-size: 16px !important;
+  line-height: 24px !important;
+  text-align: center !important;
+  opacity: 0.75 !important;
+  transition: opacity 0.2s, transform 0.15s !important;
+  user-select: none !important;
+}
+.passapp-field-badge:hover {
+  opacity: 1 !important;
+  transform: scale(1.15) !important;
+}
+
+.passapp-floating-menu {
+  position: absolute !important;
+  z-index: 2147483647 !important;
+  background: #172020 !important;
+  color: #f0f5f2 !important;
+  border: 1px solid #293838 !important;
+  border-radius: 10px !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5) !important;
+  padding: 8px !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
+  font-size: 13px !important;
+  animation: passappFadeIn 0.15s ease-out !important;
+}
+
+@keyframes passappFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.passapp-menu-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 6px 8px 8px !important;
+  border-bottom: 1px solid #202d2d !important;
+  font-weight: 700 !important;
+  font-size: 12px !important;
+  color: #1f9d55 !important;
+}
+.passapp-menu-header small {
+  color: #8d9e96 !important;
+  font-weight: normal !important;
+  font-size: 11px !important;
+}
+
+.passapp-menu-list {
+  display: grid !important;
+  gap: 4px !important;
+  margin-top: 6px !important;
+}
+
+.passapp-menu-item {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  padding: 8px 10px !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  color: #f0f5f2 !important;
+  text-align: left !important;
+  cursor: pointer !important;
+  transition: background 0.15s !important;
+}
+.passapp-menu-item:hover {
+  background: rgba(31, 157, 85, 0.15) !important;
+  border-color: rgba(31, 157, 85, 0.3) !important;
+}
+
+.passapp-item-info strong {
+  display: block !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+.passapp-item-info small {
+  display: block !important;
+  font-size: 11px !important;
+  color: #8d9e96 !important;
+  margin-top: 2px !important;
+}
+
+.passapp-totp-tag {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  color: #1f9d55 !important;
+  background: rgba(31, 157, 85, 0.15) !important;
+  padding: 2px 6px !important;
+  border-radius: 10px !important;
+}
+
+#passapp-inline-toast {
+  position: fixed !important;
+  bottom: 24px !important;
+  right: 24px !important;
+  z-index: 2147483647 !important;
+  background: #172020 !important;
+  color: #f0f5f2 !important;
+  border: 1px solid #1f9d55 !important;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.45) !important;
+  padding: 12px 18px !important;
+  border-radius: 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  transition: opacity 0.3s, transform 0.3s !important;
+}

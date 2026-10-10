@@ -34,7 +34,9 @@ struct NewEntry {
     #[serde(default)]
     url: Option<String>,
     #[serde(default)]
-    notes: Option<String>,
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub totp_secret: Option<String>,
     category: String,
     favorite: bool,
 }
@@ -50,6 +52,8 @@ struct UpdateEntry {
     url: Option<String>,
     #[serde(default)]
     notes: Option<String>,
+    #[serde(default)]
+    pub totp_secret: Option<String>,
     category: String,
     favorite: bool,
 }
@@ -280,6 +284,7 @@ fn create_vault_entry(
         password: entry.password,
         url: entry.url,
         notes: entry.notes,
+        totp_secret: entry.totp_secret,
         category: entry.category,
         favorite: entry.favorite,
         updated_at,
@@ -322,6 +327,7 @@ fn update_vault_entry(
     target.password = entry.password;
     target.url = entry.url;
     target.notes = entry.notes;
+    target.totp_secret = entry.totp_secret;
     target.category = entry.category;
     target.favorite = entry.favorite;
     target.updated_at = updated_at;
@@ -421,6 +427,67 @@ fn open_vault_directory(state: tauri::State<'_, AppState>) -> Result<(), String>
     Ok(())
 }
 
+#[tauri::command]
+fn sync_vault_with_file(
+    state: tauri::State<'_, AppState>,
+    sync_file_path: String,
+) -> Result<OpenVaultResult, String> {
+    let sync_path = PathBuf::from(&sync_file_path);
+    let password = state
+        .password
+        .lock()
+        .map_err(|_| "Session indisponible".to_owned())?
+        .clone()
+        .ok_or_else(|| "Coffre verrouille".to_owned())?;
+
+    let mut doc_guard = state
+        .document
+        .lock()
+        .map_err(|_| "Coffre indisponible".to_owned())?;
+    let mut local_doc = doc_guard
+        .clone()
+        .ok_or_else(|| "Coffre non charge".to_owned())?;
+
+    if sync_path.exists() {
+        let remote_bytes = fs::read(&sync_path)
+            .map_err(|e| format!("Lecture du fichier distant impossible: {e}"))?;
+        let encrypted: EncryptedPayload = serde_json::from_slice(&remote_bytes)
+            .map_err(|e| format!("Format du fichier distant invalide: {e}"))?;
+        let plaintext = decrypt(&password, &encrypted)
+            .map_err(|_| "Mot de passe different ou fichier distant altere".to_owned())?;
+        let remote_doc: VaultDocument = serde_json::from_slice(&plaintext)
+            .map_err(|e| format!("Contenu du coffre distant invalide: {e}"))?;
+        local_doc = local_doc.merge(&remote_doc);
+    }
+
+    persist_document(&state, &local_doc)?;
+
+    let plaintext =
+        serde_json::to_vec(&local_doc).map_err(|e| format!("Erreur de serialisation: {e}"))?;
+    let encrypted =
+        encrypt(&password, &plaintext).map_err(|e| format!("Erreur de chiffrement: {e:?}"))?;
+    let payload =
+        serde_json::to_vec_pretty(&encrypted).map_err(|e| format!("Erreur de conversion: {e}"))?;
+
+    if let Some(parent) = sync_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    fs::write(&sync_path, payload)
+        .map_err(|e| format!("Ecriture du fichier distant impossible: {e}"))?;
+
+    *doc_guard = Some(local_doc.clone());
+
+    Ok(OpenVaultResult {
+        vault_locked: false,
+        entries: local_doc.entries,
+        vault_path: state
+            .storage_path
+            .lock()
+            .ok()
+            .and_then(|p| p.as_ref().map(|p| p.to_string_lossy().to_string())),
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -440,7 +507,8 @@ pub fn run() {
             update_vault_entry,
             delete_vault_entry,
             change_master_password,
-            open_vault_directory
+            open_vault_directory,
+            sync_vault_with_file
         ])
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;

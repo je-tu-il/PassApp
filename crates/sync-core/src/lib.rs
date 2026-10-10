@@ -16,6 +16,8 @@ pub struct VaultEntry {
     pub url: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    #[serde(default)]
+    pub totp_secret: Option<String>,
     pub category: String,
     pub favorite: bool,
     pub updated_at: u64,
@@ -87,6 +89,7 @@ mod tests {
             password: Some("secret123".to_owned()),
             url: Some("https://example.com".to_owned()),
             notes: None,
+            totp_secret: None,
             category: "Personnel".to_owned(),
             favorite: false,
             updated_at,
@@ -172,5 +175,6 @@ mod tests {
         assert_eq!(entry.password, None);
         assert_eq!(entry.url, None);
         assert_eq!(entry.notes, None);
+        assert_eq!(entry.totp_secret, None);
     }
 }
