@@ -1,10 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { demoEntries, type VaultEntry } from './contracts'
+import { type VaultEntry } from './contracts'
 import './App.css'
 
 type AppStatus = {
   vault_locked: boolean
+  vault_exists: boolean
   storage: string
   vault_path: string | null
 }
@@ -29,6 +30,8 @@ type OpenVaultResult = {
 
 type SortOption = 'title-asc' | 'title-desc' | 'category' | 'recent'
 type ActiveFilter = 'all' | 'favorites' | 'Personnel' | 'Travail' | 'Finance'
+type AccentColor = 'emerald' | 'amber' | 'sapphire' | 'amethyst' | 'ruby'
+type ThemeMode = 'dark' | 'light'
 
 type GeneratorConfig = {
   length: number
@@ -47,14 +50,15 @@ type PasswordStrength = {
   tips: string[]
 }
 
-const browserStatus: AppStatus = {
-  vault_locked: true,
-  storage: 'browser-demo',
-  vault_path: 'E:\\Reste\\PROJET_PERSO\\PassApp\\vault.passapp (mode navigateur)',
-}
+const WORD_POOL = [
+  'aurore', 'bastion', 'boussole', 'cristal', 'diamant', 'eclat',
+  'etoile', 'flamme', 'horizon', 'miroir', 'navire', 'ombre',
+  'oracle', 'refuge', 'sentier', 'silence', 'sommet', 'titan',
+  'vallee', 'vigie', 'zodiaque', 'zenith', 'comete', 'faucon',
+]
 
 function fromBackendEntry(entry: BackendVaultEntry): VaultEntry {
-  let formatted = 'Enregistré localement'
+  let formatted = 'Enregistré'
   if (entry.updated_at > 0) {
     const d = new Date(entry.updated_at * 1000)
     formatted = d.toLocaleDateString('fr-FR', {
@@ -77,7 +81,6 @@ function fromBackendEntry(entry: BackendVaultEntry): VaultEntry {
   }
 }
 
-// Calcul de l'entropie et de la force cryptographique
 function evaluatePassword(pwd: string): PasswordStrength {
   if (!pwd) {
     return {
@@ -85,7 +88,7 @@ function evaluatePassword(pwd: string): PasswordStrength {
       entropyBits: 0,
       label: 'Vide',
       color: '#8c9590',
-      tips: ['Saisissez un mot de passe pour tester sa robustesse'],
+      tips: ['Saisissez un mot de passe pour analyser sa force'],
     }
   }
 
@@ -106,7 +109,7 @@ function evaluatePassword(pwd: string): PasswordStrength {
   if (!hasUpper) tips.push('+ Majuscules')
   if (!hasDigit) tips.push('+ Chiffres')
   if (!hasSpecial) tips.push('+ Symboles')
-  if (pwd.length < 12) tips.push('Longueur recommandée ≥ 14 caractères')
+  if (pwd.length < 12) tips.push('Longueur recommandée ≥ 14')
 
   if (entropyBits < 35 || pwd.length < 8) {
     return { score: 1, entropyBits, label: 'Faible', color: '#e05245', tips }
@@ -120,7 +123,6 @@ function evaluatePassword(pwd: string): PasswordStrength {
   return { score: 4, entropyBits, label: 'Excellent', color: '#1f9d55', tips }
 }
 
-// Générateur de mot de passe hautement paramétrable
 function generatePasswordWithOptions(config: GeneratorConfig): string {
   let upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
   let lower = 'abcdefghijkmnopqrstuvwxyz'
@@ -147,27 +149,44 @@ function generatePasswordWithOptions(config: GeneratorConfig): string {
 }
 
 function App() {
-  const [activeFilter, setActiveFilter] = useState<ActiveFilter>('all')
-  const [query, setQuery] = useState('')
-  const [selectedId, setSelectedId] = useState('')
+  // Personnalisation : Thème & Couleur d'accent
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    return (localStorage.getItem('passapp_theme') as ThemeMode) || 'dark'
+  })
+  const [accentColor, setAccentColor] = useState<AccentColor>(() => {
+    return (localStorage.getItem('passapp_accent') as AccentColor) || 'emerald'
+  })
+
+  // Initialisation du coffre & Onboarding
+  const [vaultExists, setVaultExists] = useState<boolean>(true)
+  const [onboardingStep, setOnboardingStep] = useState<number>(1)
+  const [recoveryWords, setRecoveryWords] = useState<string[]>([])
+  const [copiedRecovery, setCopiedRecovery] = useState<boolean>(false)
+  const [onboardingMasterPassword, setOnboardingMasterPassword] = useState('')
+  const [onboardingConfirmPassword, setOnboardingConfirmPassword] = useState('')
+
+  // État du coffre
   const [isLocked, setIsLocked] = useState(true)
   const [entries, setEntries] = useState<VaultEntry[]>([])
-  const [storageLabel, setStorageLabel] = useState('browser-demo')
+  const [storageLabel, setStorageLabel] = useState('encrypted-local')
   const [vaultPath, setVaultPath] = useState<string>('')
   const [password, setPassword] = useState('')
   const [openError, setOpenError] = useState('')
   const [isBrowserMode, setIsBrowserMode] = useState(false)
 
-  // Tri & Filtres
+  // Navigation & Filtres
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>('all')
+  const [query, setQuery] = useState('')
+  const [selectedId, setSelectedId] = useState('')
   const [sortBy, setSortBy] = useState<SortOption>('title-asc')
   const [showSortMenu, setShowSortMenu] = useState(false)
 
-  // Visualisation & Copie
+  // Actions & Presse-papier
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [showEntryMenu, setShowEntryMenu] = useState(false)
 
-  // Presse-papier auto-nettoyant
+  // Toast auto-nettoyant
   const [clipboardTimer, setClipboardTimer] = useState<{ active: boolean; secondsLeft: number; label: string }>({
     active: false,
     secondsLeft: 0,
@@ -175,7 +194,7 @@ function App() {
   })
   const clipboardIntervalRef = useRef<number | null>(null)
 
-  // Verrouillage auto sur inactivité
+  // Inactivité
   const [autoLockMinutes, setAutoLockMinutes] = useState<number>(5)
   const lastActivityRef = useRef<number>(Date.now())
 
@@ -205,43 +224,69 @@ function App() {
   const [formCategory, setFormCategory] = useState<'Personnel' | 'Travail' | 'Finance'>('Personnel')
   const [formFavorite, setFormFavorite] = useState(false)
 
-  // Formulaire de changement de mot de passe maître
+  // Changement de mot de passe
   const [currentMasterPassword, setCurrentMasterPassword] = useState('')
   const [newMasterPassword, setNewMasterPassword] = useState('')
   const [confirmMasterPassword, setConfirmMasterPassword] = useState('')
   const [masterPasswordMsg, setMasterPasswordMsg] = useState<{ text: string; error: boolean } | null>(null)
 
-  // Initialisation & Statut de l'application
+  // Application des variables de thème et d'accent
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', themeMode)
+    document.documentElement.setAttribute('data-accent', accentColor)
+    localStorage.setItem('passapp_theme', themeMode)
+    localStorage.setItem('passapp_accent', accentColor)
+  }, [themeMode, accentColor])
+
+  // Détection du statut du coffre
   useEffect(() => {
     invoke<AppStatus>('get_app_status')
       .then(async (status) => {
+        setVaultExists(status.vault_exists)
         setIsLocked(status.vault_locked)
         setStorageLabel(status.storage)
         if (status.vault_path) setVaultPath(status.vault_path)
         setIsBrowserMode(false)
+
+        if (!status.vault_exists) {
+          // Premier lancement : préparer la phrase de récupération
+          initRecoveryWords()
+          return
+        }
+
         if (status.vault_locked) {
           setEntries([])
           setSelectedId('')
           return
         }
+
         const backendEntries = await invoke<BackendVaultEntry[]>('get_vault_entries')
-        if (backendEntries.length > 0) {
-          const loaded = backendEntries.map(fromBackendEntry)
-          setEntries(loaded)
-          setSelectedId(loaded[0].id)
-        }
+        const loaded = backendEntries.map(fromBackendEntry)
+        setEntries(loaded)
+        if (loaded.length > 0) setSelectedId(loaded[0].id)
       })
       .catch(() => {
-        setIsLocked(browserStatus.vault_locked)
-        setStorageLabel(browserStatus.storage)
-        setVaultPath(browserStatus.vault_path || '')
+        // Mode démo navigateur
         setIsBrowserMode(true)
+        const initialized = localStorage.getItem('passapp_browser_vault_initialized') === 'true'
+        setVaultExists(initialized)
+        if (!initialized) {
+          initRecoveryWords()
+        }
+        setIsLocked(true)
+        setStorageLabel('browser-demo')
+        setVaultPath('vault.passapp (mode navigateur)')
         setEntries([])
         setSelectedId('')
       })
   }, [])
 
-  // Décompte par catégorie pour la barre latérale
+  function initRecoveryWords() {
+    const shuffled = [...WORD_POOL].sort(() => 0.5 - Math.random())
+    setRecoveryWords(shuffled.slice(0, 12))
+  }
+
+  // Décompte par catégorie
   const categoryCounts = useMemo(() => {
     return {
       all: entries.length,
@@ -252,15 +297,16 @@ function App() {
     }
   }, [entries])
 
-  // Verrouillage du coffre (Efface la mémoire et réinitialise l'état)
+  // Verrouillage du coffre
   async function toggleLock() {
     const nextLocked = !isLocked
     const status = await invoke<AppStatus>('set_vault_locked', { locked: nextLocked }).catch(() => ({
-      ...browserStatus,
       vault_locked: nextLocked,
+      vault_exists: true,
+      storage: 'browser-demo',
+      vault_path: null,
     }))
     setIsLocked(status.vault_locked)
-    setStorageLabel(status.storage)
     if (status.vault_path) setVaultPath(status.vault_path)
 
     if (status.vault_locked) {
@@ -273,7 +319,6 @@ function App() {
     }
   }
 
-  // Ouvrir la modale d'ajout
   function openAddModal() {
     setFormTitle('')
     setFormUsername('')
@@ -290,12 +335,11 @@ function App() {
   const openAddModalRef = useRef(openAddModal)
   openAddModalRef.current = openAddModal
 
-  // Suivi de l'inactivité pour le verrouillage automatique
+  // Inactivité
   useEffect(() => {
     function handleUserActivity() {
       lastActivityRef.current = Date.now()
     }
-
     window.addEventListener('mousemove', handleUserActivity)
     window.addEventListener('keydown', handleUserActivity)
     window.addEventListener('mousedown', handleUserActivity)
@@ -318,7 +362,7 @@ function App() {
     }
   }, [autoLockMinutes, isLocked])
 
-  // Raccourcis clavier (Ctrl+L, Ctrl+N, Escape)
+  // Raccourcis clavier
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
@@ -342,7 +386,7 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isLocked])
 
-  // Filtrage et Tri des entrées
+  // Filtrage et Tri
   const visibleEntries = useMemo(() => {
     if (isLocked) return []
     const normalizedQuery = query.trim().toLowerCase()
@@ -376,35 +420,71 @@ function App() {
 
   const selectedEntry = entries.find((entry) => entry.id === selectedId) ?? visibleEntries[0]
 
-  // Déverrouillage du coffre
+  // Déverrouillage d'un coffre existant
   async function openVault() {
     if (!password) {
       setOpenError('Saisissez votre mot de passe maître.')
       return
     }
+    if (isBrowserMode) {
+      setIsLocked(false)
+      setOpenError('')
+      setPassword('')
+      return
+    }
+
     const result = await invoke<OpenVaultResult>('open_vault', { password }).catch((error: unknown) => {
-      setOpenError(typeof error === 'string' ? error : "Impossible d'ouvrir le coffre.")
+      setOpenError(typeof error === 'string' ? error : "Mot de passe incorrect ou coffre altéré.")
       return undefined
     })
     if (!result) return
 
     const loaded = result.entries.map(fromBackendEntry)
     setEntries(loaded)
-    setSelectedId(loaded[0]?.id ?? '')
+    if (loaded.length > 0) setSelectedId(loaded[0].id)
     if (result.vault_path) setVaultPath(result.vault_path)
     setIsLocked(false)
     setOpenError('')
     setPassword('')
   }
 
-  function unlockBrowserDemo() {
-    setEntries(demoEntries)
-    setSelectedId(demoEntries[0].id)
-    setIsLocked(false)
-    setOpenError('')
+  // Création initiale du coffre (Onboarding)
+  async function completeInitialSetup() {
+    if (onboardingMasterPassword.length < 8) {
+      alert('Le mot de passe maître doit comporter au moins 8 caractères.')
+      return
+    }
+    if (onboardingMasterPassword !== onboardingConfirmPassword) {
+      alert('Les mots de passe ne correspondent pas.')
+      return
+    }
+
+    if (isBrowserMode) {
+      localStorage.setItem('passapp_browser_vault_initialized', 'true')
+      localStorage.setItem('passapp_recovery_phrase', recoveryWords.join(' '))
+      setVaultExists(true)
+      setIsLocked(false)
+      setEntries([])
+      return
+    }
+
+    const result = await invoke<OpenVaultResult>('create_initial_vault', {
+      password: onboardingMasterPassword,
+    }).catch((err: unknown) => {
+      alert(`Erreur d'initialisation : ${err}`)
+      return null
+    })
+
+    if (result) {
+      localStorage.setItem('passapp_recovery_phrase', recoveryWords.join(' '))
+      setVaultExists(true)
+      setIsLocked(false)
+      setEntries([])
+      if (result.vault_path) setVaultPath(result.vault_path)
+    }
   }
 
-  // Copie dans le presse-papier avec compte à rebours de sécurité (30s)
+  // Copie dans le presse-papier avec auto-nettoyage (30s)
   async function copyToClipboard(text: string, key: string, label: string) {
     if (!text) return
     try {
@@ -412,7 +492,6 @@ function App() {
       setCopiedKey(key)
       setTimeout(() => setCopiedKey(null), 2000)
 
-      // Démarre le décompte d'effacement automatique
       if (clipboardIntervalRef.current) {
         window.clearInterval(clipboardIntervalRef.current)
       }
@@ -445,32 +524,31 @@ function App() {
     }, 2500)
   }
 
-  // Ouvrir le répertoire du coffre dans l'explorateur
+  // Ouvrir dossier coffre
   async function openVaultDir() {
     await invoke('open_vault_directory').catch(() => {})
   }
 
-  // Ouvrir le générateur autonome
+  // Générateur
   function openGeneratorModal() {
     const pwd = generatePasswordWithOptions(genConfig)
     setGeneratedPassword(pwd)
     setIsGeneratorOpen(true)
   }
 
-  // Régénérer avec les paramètres actuels
   function regeneratePassword() {
     const pwd = generatePasswordWithOptions(genConfig)
     setGeneratedPassword(pwd)
   }
 
-  // Enregistrer une nouvelle entrée
+  // Création d'entrée
   async function handleCreateEntry(e: React.FormEvent) {
     e.preventDefault()
     if (!formTitle.trim()) return
 
     if (isBrowserMode) {
       const newEntry: VaultEntry = {
-        id: `demo-${Date.now()}`,
+        id: `entry-${Date.now()}`,
         title: formTitle.trim(),
         username: formUsername.trim(),
         password: formPassword || undefined,
@@ -509,7 +587,7 @@ function App() {
     }
   }
 
-  // Ouvrir la modale d'édition
+  // Édition d'entrée
   function openEditModal(entry: VaultEntry) {
     setFormTitle(entry.title)
     setFormUsername(entry.username)
@@ -522,7 +600,6 @@ function App() {
     setShowEntryMenu(false)
   }
 
-  // Enregistrer les modifications
   async function handleUpdateEntry(e: React.FormEvent) {
     e.preventDefault()
     if (!selectedEntry) return
@@ -594,7 +671,7 @@ function App() {
     }
   }
 
-  // Supprimer une entrée
+  // Suppression
   async function handleDeleteEntry(id: string) {
     if (!window.confirm('Voulez-vous vraiment supprimer cet identifiant ?')) return
     setShowEntryMenu(false)
@@ -620,7 +697,7 @@ function App() {
     }
   }
 
-  // Changer mot de passe maître
+  // Changement mot de passe maître
   async function handleChangeMasterPassword(e: React.FormEvent) {
     e.preventDefault()
     setMasterPasswordMsg(null)
@@ -634,7 +711,7 @@ function App() {
     }
 
     if (isBrowserMode) {
-      setMasterPasswordMsg({ text: 'Mot de passe maître démo modifié avec succès.', error: false })
+      setMasterPasswordMsg({ text: 'Mot de passe maître mis à jour avec succès.', error: false })
       setCurrentMasterPassword('')
       setNewMasterPassword('')
       setConfirmMasterPassword('')
@@ -658,7 +735,7 @@ function App() {
     }
   }
 
-  // Export JSON du coffre déchiffré
+  // Export JSON
   function exportVaultBackup() {
     const exportData = {
       app: 'PassApp',
@@ -685,7 +762,7 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
-  // Import JSON de sauvegarde
+  // Import JSON
   async function handleImportJson(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -695,7 +772,7 @@ function App() {
       const data = JSON.parse(rawText)
       const list = Array.isArray(data) ? data : data.entries
       if (!Array.isArray(list)) {
-        alert('Format de fichier de sauvegarde invalide.')
+        alert('Format de fichier de sauvegarde non reconnu.')
         return
       }
 
@@ -704,7 +781,7 @@ function App() {
         if (!item.title) continue
         if (isBrowserMode) {
           const entry: VaultEntry = {
-            id: `demo-${Date.now()}-${Math.random()}`,
+            id: `entry-${Date.now()}-${Math.random()}`,
             title: item.title,
             username: item.username || '',
             password: item.password || undefined,
@@ -743,39 +820,357 @@ function App() {
     }
   }
 
-  // Évaluation du mot de passe en direct
+  // Téléchargement kit d'urgence
+  function downloadEmergencyKit() {
+    const content = `======================================================
+PASSAPP - FICHE DE RÉCUPÉRATION & KIT D'URGENCE
+======================================================
+Date d'émission : ${new Date().toLocaleDateString('fr-FR')}
+
+PHRASE SECRÈTE DE SECOURS (12 MOTS) :
+${recoveryWords.map((w, i) => `${i + 1}. ${w}`).join('   ')}
+
+INSTRUCTIONS DE SÉCURITÉ :
+1. Conservez ce document en lieu sûr (imprimé ou sur support chiffré hors-ligne).
+2. Ne partagez jamais ces mots avec un tiers.
+3. PassApp est conçu avec une architecture Zero-Knowledge : aucune copie
+   de votre mot de passe ni de votre phrase secrète n'existe sur des serveurs distants.
+======================================================`
+
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'passapp-kit-urgence.txt'
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
   const selectedStrength = useMemo(
     () => evaluatePassword(selectedEntry?.password || ''),
     [selectedEntry?.password],
   )
   const formStrength = useMemo(() => evaluatePassword(formPassword), [formPassword])
+  const onboardingStrength = useMemo(
+    () => evaluatePassword(onboardingMasterPassword),
+    [onboardingMasterPassword],
+  )
   const generatorStrength = useMemo(() => evaluatePassword(generatedPassword), [generatedPassword])
 
+  // -------------------------------------------------------------
+  // VUE 1 : ASSISTANT D'INITIALISATION INITIAL (ONBOARDING)
+  // -------------------------------------------------------------
+  if (!vaultExists) {
+    return (
+      <main className="onboarding-shell">
+        <div className="onboarding-card">
+          {/* HEADER ET PROGRESSION */}
+          <div className="onboarding-header">
+            <div className="onboarding-brand">
+              <span className="brand-icon">🛡️</span> PassApp
+            </div>
+            <div className="step-pills">
+              {[1, 2, 3, 4].map((s) => (
+                <div key={s} className={`step-pill ${s <= onboardingStep ? 'active' : ''}`} />
+              ))}
+            </div>
+          </div>
+
+          {/* ÉTAPE 1 : BIENVENUE & PRINCIPES */}
+          {onboardingStep === 1 && (
+            <div className="onboarding-body animate-fade">
+              <h2>Bienvenue dans votre coffre-fort numérique</h2>
+              <p className="onboarding-intro">
+                PassApp sécurise tous vos identifiants sans abonnement, sans tracking, et sous votre contrôle exclusif.
+              </p>
+
+              <div className="feature-grid">
+                <div className="feature-box">
+                  <div className="feature-icon">🔒</div>
+                  <div>
+                    <strong>Chiffrement Zero-Knowledge</strong>
+                    <p>Vos clés sont dérivées via Argon2id et AES-256-GCM. Vous seul détenez le pouvoir de déchiffrement.</p>
+                  </div>
+                </div>
+                <div className="feature-box">
+                  <div className="feature-icon">🏠</div>
+                  <div>
+                    <strong>100% Souverain & Local-First</strong>
+                    <p>Vos données sont conservées sur votre appareil. Aucun serveur tiers ne stocke vos secrets.</p>
+                  </div>
+                </div>
+                <div className="feature-box">
+                  <div className="feature-icon">⚡</div>
+                  <div>
+                    <strong>Ultra-rapide & Élégant</strong>
+                    <p>Copie instantanée en un clic, recherche fluide et générateur de mot de passe hautement paramétrable.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="onboarding-footer">
+                <button
+                  type="button"
+                  className="primary-button large-btn"
+                  onClick={() => setOnboardingStep(2)}
+                >
+                  Créer mon coffre sécurisé →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ÉTAPE 2 : MOT DE PASSE MAÎTRE */}
+          {onboardingStep === 2 && (
+            <div className="onboarding-body animate-fade">
+              <h2>Définissez votre mot de passe maître</h2>
+              <p className="onboarding-intro">
+                Ce mot de passe est la clé maîtresse qui déchiffre l'ensemble de votre coffre. Choisissez un mot de passe mémorable et fort.
+              </p>
+
+              <div className="form-grid">
+                <label>
+                  Mot de passe maître (8 caractères minimum)
+                  <input
+                    type="password"
+                    value={onboardingMasterPassword}
+                    onChange={(e) => setOnboardingMasterPassword(e.target.value)}
+                    placeholder="Saisissez un mot de passe robuste..."
+                    autoFocus
+                  />
+                </label>
+
+                {onboardingMasterPassword && (
+                  <div className="strength-container">
+                    <div className="strength-bars">
+                      {[1, 2, 3, 4].map((step) => (
+                        <div
+                          key={step}
+                          className={`strength-bar-step ${step <= onboardingStrength.score ? 'active' : ''}`}
+                          style={{
+                            backgroundColor:
+                              step <= onboardingStrength.score ? onboardingStrength.color : undefined,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <div className="strength-meta">
+                      <span style={{ color: onboardingStrength.color, fontWeight: 600 }}>
+                        {onboardingStrength.label} ({onboardingStrength.entropyBits} bits)
+                      </span>
+                      {onboardingStrength.tips.length > 0 && (
+                        <span className="strength-hint">{onboardingStrength.tips[0]}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <label>
+                  Confirmez le mot de passe maître
+                  <input
+                    type="password"
+                    value={onboardingConfirmPassword}
+                    onChange={(e) => setOnboardingConfirmPassword(e.target.value)}
+                    placeholder="Confirmez à nouveau..."
+                  />
+                </label>
+
+                {onboardingConfirmPassword &&
+                  onboardingMasterPassword !== onboardingConfirmPassword && (
+                    <p className="form-error">Les mots de passe ne correspondent pas.</p>
+                  )}
+              </div>
+
+              <div className="onboarding-footer flex-between">
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => setOnboardingStep(1)}
+                >
+                  ← Retour
+                </button>
+                <button
+                  type="button"
+                  className="primary-button large-btn"
+                  disabled={
+                    onboardingMasterPassword.length < 8 ||
+                    onboardingMasterPassword !== onboardingConfirmPassword
+                  }
+                  onClick={() => setOnboardingStep(3)}
+                >
+                  Étape suivante : Phrase secrète →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ÉTAPE 3 : PHRASE SECRÈTE DE SECOURS (12 MOTS) */}
+          {onboardingStep === 3 && (
+            <div className="onboarding-body animate-fade">
+              <h2>Phrase secrète de secours</h2>
+              <p className="onboarding-intro">
+                En cas d'oubli de votre mot de passe maître, ces 12 mots constituent votre unique moyen de recouvrement.
+              </p>
+
+              {/* GRILLE DES 12 MOTS */}
+              <div className="recovery-words-grid">
+                {recoveryWords.map((word, idx) => (
+                  <div key={idx} className="recovery-word-item">
+                    <span className="word-index">{idx + 1}.</span>
+                    <span className="word-text">{word}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="recovery-actions">
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => {
+                    navigator.clipboard.writeText(recoveryWords.join(' '))
+                    setCopiedRecovery(true)
+                    setTimeout(() => setCopiedRecovery(false), 2000)
+                  }}
+                >
+                  {copiedRecovery ? '✓ Phrase copiée' : '📋 Copier les 12 mots'}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={downloadEmergencyKit}
+                >
+                  💾 Télécharger la fiche d'urgence (.txt)
+                </button>
+              </div>
+
+              <div className="detail-note warning-note">
+                <span>⚠️</span>
+                <div>
+                  <strong>Important : Sauvegardez ces mots hors-ligne</strong>
+                  <p>Aucun serveur ne détient vos clés. Si vous égarez votre mot de passe maître sans cette phrase, vos identifiants seront irrécupérables.</p>
+                </div>
+              </div>
+
+              <div className="onboarding-footer flex-between">
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => setOnboardingStep(2)}
+                >
+                  ← Retour
+                </button>
+                <button
+                  type="button"
+                  className="primary-button large-btn"
+                  onClick={() => setOnboardingStep(4)}
+                >
+                  Étape suivante : Personnalisation →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ÉTAPE 4 : PERSONNALISATION DU THÈME & FINALISATION */}
+          {onboardingStep === 4 && (
+            <div className="onboarding-body animate-fade">
+              <h2>Personnalisez votre expérience</h2>
+              <p className="onboarding-intro">
+                Adaptez l'interface selon vos préférences visuelles. Ces réglages restent modifiables à tout moment.
+              </p>
+
+              <div className="customization-section">
+                <h4>Mode d'affichage</h4>
+                <div className="theme-toggle-row">
+                  <button
+                    type="button"
+                    className={`theme-choice-btn ${themeMode === 'dark' ? 'active' : ''}`}
+                    onClick={() => setThemeMode('dark')}
+                  >
+                    🌙 Sombre (Recommandé)
+                  </button>
+                  <button
+                    type="button"
+                    className={`theme-choice-btn ${themeMode === 'light' ? 'active' : ''}`}
+                    onClick={() => setThemeMode('light')}
+                  >
+                    ☀️ Clair
+                  </button>
+                </div>
+
+                <h4>Couleur d'accentuation</h4>
+                <div className="accent-pickers">
+                  {[
+                    { id: 'emerald', name: 'Émeraude', color: '#1f9d55' },
+                    { id: 'amber', name: 'Ambre', color: '#e06d45' },
+                    { id: 'sapphire', name: 'Saphir', color: '#2563eb' },
+                    { id: 'amethyst', name: 'Améthyste', color: '#8b5cf6' },
+                    { id: 'ruby', name: 'Rubis', color: '#e11d48' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`accent-dot-btn ${accentColor === item.id ? 'active' : ''}`}
+                      onClick={() => setAccentColor(item.id as AccentColor)}
+                      title={item.name}
+                    >
+                      <span className="dot" style={{ backgroundColor: item.color }} />
+                      <small>{item.name}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="onboarding-footer flex-between">
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => setOnboardingStep(3)}
+                >
+                  ← Retour
+                </button>
+                <button
+                  type="button"
+                  className="primary-button large-btn glow"
+                  onClick={() => void completeInitialSetup()}
+                >
+                  ✨ Initialiser et ouvrir mon coffre
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+    )
+  }
+
+  // -------------------------------------------------------------
+  // VUE 2 : APPLICATION PRINCIPALE
+  // -------------------------------------------------------------
   return (
     <main className="app-shell">
       {/* BARRE LATÉRALE */}
       <aside className="sidebar">
         <div className="brand-mark">
-          <span>+</span> PassApp
+          <span className="brand-shield">🛡️</span> PassApp
         </div>
 
-        {/* PROFIL UTILISATEUR & MENU */}
+        {/* PROFIL UTILISATEUR & RÉGLAGES */}
         <div
           className="profile-row clickable"
           onClick={() => setIsProfileOpen(true)}
           role="button"
           tabIndex={0}
-          title="Ouvrir les paramètres et l'emplacement du coffre"
+          title="Ouvrir les paramètres et réglages"
         >
           <div className="avatar">AM</div>
           <div>
             <strong>Alexandre Martin</strong>
-            <small>Coffre local-first</small>
+            <small>Coffre souverain</small>
           </div>
           <button
             className="icon-button"
             type="button"
-            aria-label="Ouvrir les paramètres"
+            aria-label="Ouvrir les réglages"
             onClick={(e) => {
               e.stopPropagation()
               setIsProfileOpen(true)
@@ -785,7 +1180,7 @@ function App() {
           </button>
         </div>
 
-        {/* NAVIGATION PAR CATÉGORIE AVEC COMPTEURS */}
+        {/* NAVIGATION PAR CATÉGORIE */}
         <nav aria-label="Catégories du coffre">
           <button
             className={activeFilter === 'all' ? 'nav-item active' : 'nav-item'}
@@ -825,7 +1220,7 @@ function App() {
           </button>
         </nav>
 
-        {/* PIED DE PAGE AVEC EMPLACEMENT DU COFFRE & STATUT */}
+        {/* PIED DE PAGE : STATUT & BASULE THÈME */}
         <div className="sidebar-footer">
           <div className="footer-status">
             <span className={isLocked ? 'sync-dot locked' : 'sync-dot active'} />
@@ -834,19 +1229,30 @@ function App() {
                 ? 'Coffre verrouillé'
                 : storageLabel === 'browser-demo'
                 ? 'Mode démo web'
-                : 'Stockage chiffré'}
+                : 'Stockage local chiffré'}
             </span>
           </div>
-          {vaultPath && (
+
+          <div className="sidebar-quick-actions">
             <button
-              className="vault-path-badge"
               type="button"
-              onClick={openVaultDir}
-              title="Cliquez pour révéler le fichier vault.passapp dans l'explorateur"
+              className="theme-quick-btn"
+              onClick={() => setThemeMode(themeMode === 'dark' ? 'light' : 'dark')}
+              title={themeMode === 'dark' ? 'Passer en thème clair' : 'Passer en thème sombre'}
             >
-              📁 Dossier coffre
+              {themeMode === 'dark' ? '☀️ Mode Clair' : '🌙 Mode Sombre'}
             </button>
-          )}
+            {vaultPath && (
+              <button
+                className="vault-path-badge"
+                type="button"
+                onClick={openVaultDir}
+                title="Révéler le fichier vault.passapp dans l'explorateur"
+              >
+                📁 Fichier coffre
+              </button>
+            )}
+          </div>
         </div>
       </aside>
 
@@ -854,10 +1260,10 @@ function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">ESPACE SÉCURISÉ LOCAL</p>
+            <p className="eyebrow">COFFRE-FORT SOUVERAIN</p>
             <h1>
               {activeFilter === 'all'
-                ? 'Mon coffre-fort'
+                ? 'Tous les identifiants'
                 : activeFilter === 'favorites'
                 ? 'Mes favoris'
                 : activeFilter}
@@ -869,7 +1275,7 @@ function App() {
                 className="secondary-top-button"
                 type="button"
                 onClick={openGeneratorModal}
-                title="Générateur de mot de passe hautement sécurisé"
+                title="Générateur de mot de passe fort"
               >
                 <span>🎲</span> Générateur
               </button>
@@ -877,29 +1283,34 @@ function App() {
             <button
               className={isLocked ? 'lock-button locked' : 'lock-button'}
               type="button"
-              onClick={() => (isBrowserMode ? (isLocked ? unlockBrowserDemo() : toggleLock()) : void toggleLock())}
+              onClick={() => void toggleLock()}
               title={isLocked ? 'Déverrouiller le coffre' : 'Verrouiller le coffre (Ctrl+L)'}
             >
               <span>{isLocked ? '🔒' : '🔓'}</span>
               {isLocked ? 'Déverrouiller' : 'Verrouiller'}
             </button>
             {!isLocked && (
-              <button className="primary-button" type="button" onClick={openAddModal} title="Ajouter une entrée (Ctrl+N)">
-                <span>+</span> Nouvelle entrée
+              <button
+                className="primary-button"
+                type="button"
+                onClick={openAddModal}
+                title="Ajouter un identifiant (Ctrl+N)"
+              >
+                <span>+</span> Nouvel accès
               </button>
             )}
           </div>
         </header>
 
         <div className="content-grid">
-          {/* PANNEAU DE GAUCHE : LISTE OU ÉCRAN VERROUILLÉ */}
+          {/* PANNEAU DE GAUCHE : LISTE */}
           <section className="entry-panel" aria-label="Liste des entrées">
             {isLocked ? (
               <div className="panel-locked-notice">
                 <div className="locked-badge-icon">🔒</div>
                 <h3>Coffre verrouillé</h3>
-                <p>Vos identifiants sont chiffrés et masqués pour votre sécurité.</p>
-                <small>Saisissez votre mot de passe maître pour déchiffrer vos accès.</small>
+                <p>Vos accès sont masqués et protégés par chiffrement de bout en bout.</p>
+                <small>Saisissez votre mot de passe maître pour afficher vos secrets.</small>
               </div>
             ) : (
               <>
@@ -980,7 +1391,7 @@ function App() {
                   </div>
                 </div>
 
-                {/* LISTE DES ENTRÉES */}
+                {/* LISTE DES ENTRÉES OU MESSAGE COFFRE VIDE */}
                 <div className="entry-list">
                   {visibleEntries.map((entry) => (
                     <button
@@ -1008,10 +1419,15 @@ function App() {
                       </span>
                     </button>
                   ))}
-                  {!visibleEntries.length && (
-                    <p className="empty-state">
-                      {query ? 'Aucun résultat correspondant.' : 'Aucun identifiant dans cette catégorie.'}
-                    </p>
+
+                  {visibleEntries.length === 0 && (
+                    <div className="empty-panel-notice">
+                      <p>
+                        {query
+                          ? 'Aucun résultat correspondant.'
+                          : 'Aucun identifiant dans cette catégorie.'}
+                      </p>
+                    </div>
                   )}
                 </div>
               </>
@@ -1024,33 +1440,39 @@ function App() {
               <div className="locked-state">
                 <div className="lock-symbol">🔒</div>
                 <h2>Coffre verrouillé</h2>
-                <p>
-                  {isBrowserMode
-                    ? 'Mode navigateur démo : déverrouillez pour explorer les données locales.'
-                    : 'Saisissez votre mot de passe maître pour déchiffrer votre coffre.'}
-                </p>
-                {isBrowserMode ? (
-                  <button className="primary-button" type="button" onClick={unlockBrowserDemo}>
-                    Déverrouiller la démo
+                <p>Saisissez votre mot de passe maître pour déchiffrer votre coffre.</p>
+                <div className="unlock-form">
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void openVault()
+                    }}
+                    placeholder="Mot de passe maître"
+                    autoFocus
+                  />
+                  <button className="primary-button" type="button" onClick={() => void openVault()}>
+                    Ouvrir mon coffre
                   </button>
-                ) : (
-                  <div className="unlock-form">
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') void openVault()
-                      }}
-                      placeholder="Mot de passe maître"
-                      autoFocus
-                    />
-                    <button className="primary-button" type="button" onClick={() => void openVault()}>
-                      Ouvrir le coffre
-                    </button>
-                    {openError && <p className="form-error">{openError}</p>}
-                  </div>
-                )}
+                  {openError && <p className="form-error">{openError}</p>}
+                </div>
+              </div>
+            ) : entries.length === 0 ? (
+              <div className="empty-vault-card">
+                <div className="empty-icon-shield">🛡️</div>
+                <h2>Votre coffre est sécurisé & prêt</h2>
+                <p>
+                  Vous n'avez pas encore d'identifiant enregistré. Créez votre premier accès ou importez une sauvegarde existante.
+                </p>
+                <div className="empty-card-actions">
+                  <button className="primary-button" type="button" onClick={openAddModal}>
+                    <span>+</span> Ajouter un premier identifiant
+                  </button>
+                  <button className="secondary-btn" type="button" onClick={openGeneratorModal}>
+                    <span>🎲</span> Générer un mot de passe fort
+                  </button>
+                </div>
               </div>
             ) : selectedEntry ? (
               <>
@@ -1064,7 +1486,7 @@ function App() {
                     <p>Dernière modification : {selectedEntry.updatedAt}</p>
                   </div>
 
-                  {/* BOUTON ACTIONS D'ENTRÉE "..." */}
+                  {/* MENU D'OPTIONS */}
                   <div className="entry-actions-container">
                     <button
                       className="icon-button menu-trigger"
@@ -1117,7 +1539,7 @@ function App() {
                   </div>
                 </div>
 
-                {/* CHAMP MOT DE PASSE AVEC ANALYSE DE FORCE */}
+                {/* CHAMP MOT DE PASSE AVEC ANALYSE */}
                 <div className="field-group">
                   <label>Mot de passe</label>
                   <div className="secret-field">
@@ -1145,14 +1567,13 @@ function App() {
                         onClick={() =>
                           void copyToClipboard(selectedEntry.password || '', 'password', 'Mot de passe')
                         }
-                        title="Copier le mot de passe avec effacement auto dans 30s"
+                        title="Copier avec effacement auto dans 30s"
                       >
                         {copiedKey === 'password' ? '✓ Copié !' : '📋 Copier'}
                       </button>
                     </div>
                   </div>
 
-                  {/* INDICATEUR DE FORCE DU MOT DE PASSE */}
                   {selectedEntry.password && (
                     <div className="strength-container">
                       <div className="strength-bars">
@@ -1171,7 +1592,7 @@ function App() {
                       </div>
                       <div className="strength-meta">
                         <span style={{ color: selectedStrength.color, fontWeight: 600 }}>
-                          Robustesse : {selectedStrength.label}
+                          Force : {selectedStrength.label}
                         </span>
                         <span className="entropy-tag">{selectedStrength.entropyBits} bits d'entropie</span>
                       </div>
@@ -1211,10 +1632,10 @@ function App() {
                 <div className="detail-note">
                   <span>🛡️</span>
                   <div>
-                    <strong>Chiffrement de bout en bout & Sécurité maximale</strong>
+                    <strong>Chiffrement Argon2id + AES-256-GCM</strong>
                     <p>
-                      Vos identifiants sont chiffrés avec <b>Argon2id</b> et <b>AES-256-GCM</b>. Le presse-papier
-                      est vidé automatiquement après chaque copie pour prévenir les fuites de données.
+                      Vos données sont scellées cryptographiquement sur cet appareil. Le presse-papier
+                      est vidé automatiquement après chaque copie pour garantir votre confidentialité.
                     </p>
                   </div>
                 </div>
@@ -1226,7 +1647,7 @@ function App() {
         </div>
       </section>
 
-      {/* TOAST FLOTTANT DU PRESSE-PAPIER AUTO-NETTOYANT */}
+      {/* TOAST FLOTTANT PRESSE-PAPIER */}
       {clipboardTimer.active && (
         <div className="clipboard-toast">
           <div className="toast-content">
@@ -1235,7 +1656,7 @@ function App() {
               <strong>{clipboardTimer.label} copié !</strong>
               <p>
                 {clipboardTimer.secondsLeft > 0
-                  ? `Effacement automatique dans ${clipboardTimer.secondsLeft} s`
+                  ? `Effacement auto dans ${clipboardTimer.secondsLeft} s`
                   : 'Presse-papier sécurisé et vidé.'}
               </p>
             </div>
@@ -1245,7 +1666,7 @@ function App() {
               className="toast-clear-button"
               type="button"
               onClick={clearClipboardImmediately}
-              title="Vider le presse-papier immédiatement"
+              title="Vider immédiatement"
             >
               Vider maintenant
             </button>
@@ -1253,7 +1674,7 @@ function App() {
         </div>
       )}
 
-      {/* MODALE DU GÉNÉRATEUR AUTONOME */}
+      {/* MODALE DU GÉNÉRATEUR */}
       {isGeneratorOpen && (
         <div className="modal-backdrop" onClick={() => setIsGeneratorOpen(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
@@ -1285,7 +1706,6 @@ function App() {
                 </div>
               </div>
 
-              {/* BARRE DE ROBUSTESSE */}
               <div className="strength-container">
                 <div className="strength-bars">
                   {[1, 2, 3, 4].map((step) => (
@@ -1301,13 +1721,12 @@ function App() {
                 </div>
                 <div className="strength-meta">
                   <span style={{ color: generatorStrength.color, fontWeight: 600 }}>
-                    Robustesse : {generatorStrength.label}
+                    Force : {generatorStrength.label}
                   </span>
                   <span className="entropy-tag">{generatorStrength.entropyBits} bits d'entropie</span>
                 </div>
               </div>
 
-              {/* OPTIONS DU GÉNÉRATEUR */}
               <div className="generator-options-grid">
                 <label className="slider-label">
                   <span>Longueur : <b>{genConfig.length} caractères</b></span>
@@ -1402,32 +1821,65 @@ function App() {
         </div>
       )}
 
-      {/* MODALE DU PROFIL & PARAMÈTRES DU COFFRE */}
+      {/* MODALE DU PROFIL & RÉGLAGES */}
       {isProfileOpen && (
         <div className="modal-backdrop" onClick={() => setIsProfileOpen(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Profil & Paramètres du Coffre</h2>
+              <h2>Réglages & Paramètres du Coffre</h2>
               <button className="close-button" type="button" onClick={() => setIsProfileOpen(false)}>
                 ✕
               </button>
             </div>
 
             <div className="modal-body">
-              <div className="profile-summary">
-                <div className="avatar large">AM</div>
-                <div>
-                  <h3>Alexandre Martin</h3>
-                  <p>Profil propriétaire (Local-First)</p>
-                  <span className="badge">{isLocked ? '🔒 Coffre verrouillé' : '🔓 Coffre déverrouillé'}</span>
+              {/* PERSONNALISATION DU THÈME */}
+              <div className="info-section">
+                <h4>Personnalisation de l'interface</h4>
+                <div className="theme-toggle-row">
+                  <button
+                    type="button"
+                    className={`theme-choice-btn ${themeMode === 'dark' ? 'active' : ''}`}
+                    onClick={() => setThemeMode('dark')}
+                  >
+                    🌙 Sombre
+                  </button>
+                  <button
+                    type="button"
+                    className={`theme-choice-btn ${themeMode === 'light' ? 'active' : ''}`}
+                    onClick={() => setThemeMode('light')}
+                  >
+                    ☀️ Clair
+                  </button>
+                </div>
+
+                <div className="accent-pickers" style={{ marginTop: '10px' }}>
+                  {[
+                    { id: 'emerald', name: 'Émeraude', color: '#1f9d55' },
+                    { id: 'amber', name: 'Ambre', color: '#e06d45' },
+                    { id: 'sapphire', name: 'Saphir', color: '#2563eb' },
+                    { id: 'amethyst', name: 'Améthyste', color: '#8b5cf6' },
+                    { id: 'ruby', name: 'Rubis', color: '#e11d48' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`accent-dot-btn ${accentColor === item.id ? 'active' : ''}`}
+                      onClick={() => setAccentColor(item.id as AccentColor)}
+                      title={item.name}
+                    >
+                      <span className="dot" style={{ backgroundColor: item.color }} />
+                      <small>{item.name}</small>
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* VERROUILLAGE AUTOMATIQUE PAR INACTIVITÉ */}
+              {/* VERROUILLAGE AUTOMATIQUE */}
               <div className="info-section">
                 <h4>Verrouillage automatique</h4>
                 <p className="info-desc">
-                  Pour votre sécurité, le coffre se reverrouille automatiquement en cas d'inactivité.
+                  Pour votre sécurité, le coffre se referme automatiquement en cas d'inactivité.
                 </p>
                 <label className="select-label">
                   <span>Délai d'inactivité :</span>
@@ -1438,7 +1890,7 @@ function App() {
                     <option value={2}>2 minutes</option>
                     <option value={5}>5 minutes (recommandé)</option>
                     <option value={15}>15 minutes</option>
-                    <option value={0}>Désactivé (déconseillé)</option>
+                    <option value={0}>Désactivé</option>
                   </select>
                 </label>
               </div>
@@ -1446,16 +1898,12 @@ function App() {
               {/* SAUVEGARDE, EXPORT & IMPORT */}
               <div className="info-section">
                 <h4>Sauvegardes & Données</h4>
-                <p className="info-desc">
-                  Exportez une copie de sauvegarde ou importez des identifiants au format JSON.
-                </p>
                 <div className="backup-actions">
                   <button
                     type="button"
                     className="secondary-btn"
                     onClick={exportVaultBackup}
                     disabled={isLocked}
-                    title={isLocked ? 'Déverrouillez le coffre pour exporter' : 'Exporter la sauvegarde'}
                   >
                     📥 Exporter la sauvegarde (JSON)
                   </button>
@@ -1472,12 +1920,9 @@ function App() {
                 </div>
               </div>
 
-              {/* EMPLACEMENT DU FICHIER COFFRE */}
+              {/* EMPLACEMENT DU FICHIER */}
               <div className="info-section">
-                <h4>Emplacement du coffre-fort</h4>
-                <p className="info-desc">
-                  Fichier physique chiffré contenant l'ensemble de vos secrets.
-                </p>
+                <h4>Emplacement du coffre physique</h4>
                 <div className="path-box">
                   <code>{vaultPath || 'vault.passapp'}</code>
                   <div className="path-actions">
@@ -1495,29 +1940,7 @@ function App() {
                 </div>
               </div>
 
-              {/* SÉCURITÉ CRYPTOGRAPHIQUE */}
-              <div className="info-section">
-                <h4>Spécifications de sécurité</h4>
-                <ul className="security-specs-list">
-                  <li>
-                    <strong>Dérivation de clé (KDF) :</strong> Argon2id (19 Mo mémoire, 2 itérations, sel 16 octets)
-                  </li>
-                  <li>
-                    <strong>Chiffrement symétrique :</strong> AES-256-GCM avec tag d'intégrité MAC 128 bits
-                  </li>
-                  <li>
-                    <strong>Isolation mémoire :</strong> Écrasement immédiat des clés (Zeroize) dès le verrouillage
-                  </li>
-                  <li>
-                    <strong>Protection presse-papier :</strong> Vidage automatique programmable (30s)
-                  </li>
-                  <li>
-                    <strong>Historique :</strong> Rétention automatique des 3 dernières itérations (<code>.bak1</code>, <code>.bak2</code>, <code>.bak3</code>)
-                  </li>
-                </ul>
-              </div>
-
-              {/* CHANGEMENT DU MOT DE PASSE MAÎTRE */}
+              {/* CHANGEMENT DU MOT DE PASSE */}
               {!isLocked && (
                 <div className="info-section">
                   <h4>Changer le mot de passe maître</h4>
@@ -1567,7 +1990,7 @@ function App() {
         <div className="modal-backdrop" onClick={() => setIsAddEntryOpen(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Nouvelle entrée</h2>
+              <h2>Nouvel identifiant</h2>
               <button className="close-button" type="button" onClick={() => setIsAddEntryOpen(false)}>
                 ✕
               </button>
@@ -1609,14 +2032,13 @@ function App() {
                       type="button"
                       className="secondary-btn"
                       onClick={() => setFormPassword(generatePasswordWithOptions(genConfig))}
-                      title="Générer un mot de passe aléatoire fort"
+                      title="Générer un mot de passe fort"
                     >
                       🎲 Générer
                     </button>
                   </div>
                 </label>
 
-                {/* ANALYSE EN DIRECT DE LA FORCE DU MOT DE PASSE */}
                 {formPassword && (
                   <div className="strength-container form-strength">
                     <div className="strength-bars">
@@ -1634,9 +2056,6 @@ function App() {
                       <span style={{ color: formStrength.color, fontWeight: 600 }}>
                         {formStrength.label} ({formStrength.entropyBits} bits)
                       </span>
-                      {formStrength.tips.length > 0 && (
-                        <small className="strength-hint">{formStrength.tips[0]}</small>
-                      )}
                     </div>
                   </div>
                 )}
@@ -1679,7 +2098,7 @@ function App() {
                     checked={formFavorite}
                     onChange={(e) => setFormFavorite(e.target.checked)}
                   />
-                  <span>Ajouter immédiatement aux favoris</span>
+                  <span>Ajouter aux favoris</span>
                 </label>
               </div>
 
@@ -1688,7 +2107,7 @@ function App() {
                   Annuler
                 </button>
                 <button type="submit" className="primary-button">
-                  Enregistrer dans le coffre
+                  Enregistrer l'accès
                 </button>
               </div>
             </form>
@@ -1701,7 +2120,7 @@ function App() {
         <div className="modal-backdrop" onClick={() => setIsEditEntryOpen(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Modifier l'entrée</h2>
+              <h2>Modifier l'identifiant</h2>
               <button className="close-button" type="button" onClick={() => setIsEditEntryOpen(false)}>
                 ✕
               </button>
@@ -1746,7 +2165,6 @@ function App() {
                   </div>
                 </label>
 
-                {/* ANALYSE EN DIRECT DE LA FORCE DU MOT DE PASSE */}
                 {formPassword && (
                   <div className="strength-container form-strength">
                     <div className="strength-bars">
@@ -1764,9 +2182,6 @@ function App() {
                       <span style={{ color: formStrength.color, fontWeight: 600 }}>
                         {formStrength.label} ({formStrength.entropyBits} bits)
                       </span>
-                      {formStrength.tips.length > 0 && (
-                        <small className="strength-hint">{formStrength.tips[0]}</small>
-                      )}
                     </div>
                   </div>
                 )}

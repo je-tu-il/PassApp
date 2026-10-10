@@ -20,6 +20,7 @@ struct AppState {
 #[derive(Serialize)]
 struct AppStatus {
     vault_locked: bool,
+    vault_exists: bool,
     storage: String,
     vault_path: Option<String>,
 }
@@ -113,15 +114,18 @@ fn get_app_status(state: tauri::State<'_, AppState>) -> Result<AppStatus, String
         .vault_locked
         .lock()
         .map_err(|_| "Etat du coffre indisponible".to_owned())?;
-    let vault_path = state
+    let storage_guard = state
         .storage_path
         .lock()
-        .map_err(|_| "Chemin indisponible".to_owned())?
+        .map_err(|_| "Chemin indisponible".to_owned())?;
+    let vault_exists = storage_guard.as_ref().map(|p| p.exists()).unwrap_or(false);
+    let vault_path = storage_guard
         .as_ref()
         .map(|p| p.to_string_lossy().to_string());
 
     Ok(AppStatus {
         vault_locked: *vault_locked,
+        vault_exists,
         storage: "encrypted-local".to_owned(),
         vault_path,
     })
@@ -146,17 +150,60 @@ fn set_vault_locked(state: tauri::State<'_, AppState>, locked: bool) -> Result<A
             .map_err(|_| "Session du coffre indisponible".to_owned())? = None;
     }
 
-    let vault_path = state
+    let storage_guard = state
         .storage_path
         .lock()
-        .map_err(|_| "Chemin indisponible".to_owned())?
+        .map_err(|_| "Chemin indisponible".to_owned())?;
+    let vault_exists = storage_guard.as_ref().map(|p| p.exists()).unwrap_or(false);
+    let vault_path = storage_guard
         .as_ref()
         .map(|p| p.to_string_lossy().to_string());
 
     Ok(AppStatus {
         vault_locked: *vault_locked,
+        vault_exists,
         storage: "encrypted-local".to_owned(),
         vault_path,
+    })
+}
+
+#[tauri::command]
+fn create_initial_vault(
+    state: tauri::State<'_, AppState>,
+    password: String,
+) -> Result<OpenVaultResult, String> {
+    if password.trim().is_empty() {
+        return Err("Le mot de passe maître ne peut pas être vide".to_owned());
+    }
+    let path = state
+        .storage_path
+        .lock()
+        .map_err(|_| "Chemin du coffre indisponible".to_owned())?
+        .clone()
+        .ok_or_else(|| "Stockage du coffre non initialise".to_owned())?;
+
+    let password = Zeroizing::new(password.into_bytes());
+    let document = VaultDocument::empty();
+
+    *state
+        .document
+        .lock()
+        .map_err(|_| "Coffre indisponible".to_owned())? = Some(document.clone());
+    *state
+        .password
+        .lock()
+        .map_err(|_| "Session du coffre indisponible".to_owned())? = Some(password);
+    *state
+        .vault_locked
+        .lock()
+        .map_err(|_| "Etat du coffre indisponible".to_owned())? = false;
+
+    persist_document(&state, &document)?;
+
+    Ok(OpenVaultResult {
+        vault_locked: false,
+        entries: document.entries,
+        vault_path: Some(path.to_string_lossy().to_string()),
     })
 }
 
@@ -386,6 +433,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_status,
             set_vault_locked,
+            create_initial_vault,
             open_vault,
             get_vault_entries,
             create_vault_entry,
