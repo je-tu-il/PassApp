@@ -1,5 +1,6 @@
 import SwiftUI
 import LocalAuthentication
+import UniformTypeIdentifiers
 
 // Palette de thèmes personnalisables
 public enum AccentTheme: String, CaseIterable, Identifiable {
@@ -36,7 +37,6 @@ public struct ContentView: View {
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
     @AppStorage("accentTheme") private var accentTheme: String = "emerald"
     @AppStorage("biometricsEnabled") private var biometricsEnabled: Bool = true
-    @AppStorage("recoveryPhraseSaved") private var recoveryPhraseSaved: String = ""
 
     @State private var isLocked = true
     @State private var masterPassword = ""
@@ -46,6 +46,7 @@ public struct ContentView: View {
     @State private var selectedCategory = "Tous"
     @State private var showAddSheet = false
     @State private var showSettingsSheet = false
+    @State private var showImportSheet = false
     @State private var revealedPasswords: Set<String> = []
     @State private var copiedId: String? = nil
 
@@ -83,8 +84,7 @@ public struct ContentView: View {
             if !hasCompletedOnboarding {
                 OnboardingWizardView(
                     themeColor: themeColor,
-                    onComplete: { generatedPhrase, initialPassword, enableBio in
-                        recoveryPhraseSaved = generatedPhrase
+                    onComplete: { _, initialPassword, enableBio in
                         biometricsEnabled = enableBio
                         hasCompletedOnboarding = true
                         isLocked = false
@@ -123,11 +123,20 @@ public struct ContentView: View {
                             HStack(spacing: 12) {
                                 if !isLocked {
                                     Button {
+                                        showImportSheet = true
+                                    } label: {
+                                        Image(systemName: "square.and.arrow.down")
+                                            .foregroundColor(themeColor)
+                                    }
+                                    .accessibilityLabel("Importer")
+
+                                    Button {
                                         showSettingsSheet = true
                                     } label: {
                                         Image(systemName: "gearshape")
                                             .foregroundColor(.secondary)
                                     }
+                                    .accessibilityLabel("Paramètres")
 
                                     Button {
                                         showAddSheet = true
@@ -136,6 +145,7 @@ public struct ContentView: View {
                                             .font(.title3)
                                             .foregroundColor(themeColor)
                                     }
+                                    .accessibilityLabel("Ajouter")
                                 }
                             }
                         }
@@ -150,7 +160,12 @@ public struct ContentView: View {
                     .sheet(isPresented: $showSettingsSheet) {
                         SettingsSheetView(
                             themeColor: themeColor,
-                            recoveryPhrase: recoveryPhraseSaved,
+                            onOpenImport: {
+                                showSettingsSheet = false
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    showImportSheet = true
+                                }
+                            },
                             onLockNow: {
                                 showSettingsSheet = false
                                 withAnimation {
@@ -158,6 +173,13 @@ public struct ContentView: View {
                                 }
                             }
                         )
+                    }
+                    .sheet(isPresented: $showImportSheet) {
+                        ImportSheetView(themeColor: themeColor) { importedEntries in
+                            withAnimation {
+                                entries = importedEntries + entries
+                            }
+                        }
                     }
                 }
                 .onAppear {
@@ -301,27 +323,45 @@ public struct ContentView: View {
             VStack(spacing: 8) {
                 Text("Votre coffre est prêt & sécurisé")
                     .font(.title3.bold())
-                Text("Aucun mot de passe pour le moment.\nAjoutez votre premier accès en toute sécurité.")
+                Text("Aucun mot de passe pour le moment.\nImportez instantanément vos accès ou ajoutez votre premier identifiant.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             }
 
-            Button {
-                showAddSheet = true
-            } label: {
-                HStack {
-                    Image(systemName: "plus")
-                    Text("Ajouter un premier identifiant")
-                        .bold()
+            VStack(spacing: 12) {
+                Button {
+                    showImportSheet = true
+                } label: {
+                    HStack {
+                        Image(systemName: "square.and.arrow.down.fill")
+                        Text("Importer mes mots de passe")
+                            .bold()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(themeColor)
+                    .foregroundColor(.white)
+                    .cornerRadius(14)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(themeColor)
-                .foregroundColor(.white)
-                .cornerRadius(22)
+
+                Button {
+                    showAddSheet = true
+                } label: {
+                    HStack {
+                        Image(systemName: "plus")
+                        Text("Ajouter un identifiant manuellement")
+                            .bold()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .foregroundColor(themeColor)
+                    .cornerRadius(14)
+                }
             }
+            .padding(.horizontal, 28)
             .padding(.top, 10)
 
             Spacer()
@@ -699,12 +739,11 @@ struct OnboardingWizardView: View {
 struct SettingsSheetView: View {
     @Environment(\.dismiss) var dismiss
     var themeColor: Color
-    var recoveryPhrase: String
+    var onOpenImport: () -> Void
     var onLockNow: () -> Void
 
     @AppStorage("accentTheme") private var accentTheme: String = "emerald"
     @AppStorage("biometricsEnabled") private var biometricsEnabled: Bool = true
-    @State private var showPhrase = false
 
     var body: some View {
         NavigationView {
@@ -723,15 +762,49 @@ struct SettingsSheetView: View {
                     Toggle("Déverrouillage automatique Face ID", isOn: $biometricsEnabled)
                 }
 
-                Section(header: Text("Sécurité & Récupération")) {
-                    if !recoveryPhrase.isEmpty {
-                        DisclosureGroup("Afficher la phrase de récupération") {
-                            Text(recoveryPhrase)
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(.secondary)
-                                .padding(.vertical, 6)
+                Section(header: Text("Importation de données")) {
+                    Button {
+                        onOpenImport()
+                    } label: {
+                        HStack {
+                            Image(systemName: "square.and.arrow.down")
+                                .foregroundColor(themeColor)
+                            Text("Importer (Chrome, Bitwarden, CSV, 2FA)")
+                                .foregroundColor(.primary)
                         }
                     }
+                }
+
+                Section(header: Text("Synchronisation Multi-Appareils")) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "icloud.fill")
+                            .foregroundColor(.blue)
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("iCloud Drive & Réseau local (CRDT)")
+                                .font(.subheadline.bold())
+                            Text("Votre coffre PassApp est compatible avec la synchronisation iCloud Drive et les dossiers partagés de votre PC/Mac sans aucun serveur tiers.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Section(header: Text("Sécurité & Phrase de secours")) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "shield.lefthalf.filled")
+                            .foregroundColor(themeColor)
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Phrase de secours scellée (Zero-Knowledge)")
+                                .font(.subheadline.bold())
+                            Text("Votre phrase de récupération à 12 mots a été générée lors de la configuration initiale. Pour préserver l'inviolabilité absolue de votre coffre, elle n'est pas conservée en clair et ne peut pas être réaffichée ici.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
 
                     Button("Verrouiller le coffre maintenant") {
                         dismiss()
@@ -828,3 +901,266 @@ struct AddEntryView: View {
         return String((0..<length).compactMap { _ in chars.randomElement() })
     }
 }
+
+// -------------------------------------------------------------
+// FICHE D'IMPORTATION UNIVERSELLE (CSV, JSON, 2FA)
+// -------------------------------------------------------------
+struct ImportSheetView: View {
+    @Environment(\.dismiss) var dismiss
+    var themeColor: Color
+    var onImport: ([VaultEntry]) -> Void
+
+    @State private var importText = ""
+    @State private var showFileImporter = false
+    @State private var parsedEntries: [VaultEntry] = []
+    @State private var importError: String? = nil
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Sources supportées")) {
+                    Text("Chrome, Edge, Firefox, Bitwarden, 1Password, KeePass, LastPass, CSV, PassApp JSON et Authenticator (otpauth://).")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Button {
+                        showFileImporter = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "doc.badge.plus")
+                                .foregroundColor(themeColor)
+                            Text("Choisir un fichier (CSV, JSON, TXT)")
+                                .bold()
+                        }
+                    }
+
+                    Button {
+                        if let pasted = UIPasteboard.general.string, !pasted.isEmpty {
+                            importText = pasted
+                            parsedEntries = VaultImporterHelper.parse(text: pasted)
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "doc.on.clipboard")
+                                .foregroundColor(themeColor)
+                            Text("Coller depuis le presse-papier")
+                        }
+                    }
+                }
+
+                Section(header: Text("Ou saisie directe")) {
+                    TextEditor(text: $importText)
+                        .frame(height: 90)
+                        .font(.system(.caption, design: .monospaced))
+                        .onChange(of: importText) { newText in
+                            parsedEntries = VaultImporterHelper.parse(text: newText)
+                        }
+                }
+
+                if !parsedEntries.isEmpty {
+                    Section(header: Text("Aperçu (\(parsedEntries.count) détecté(s))")) {
+                        ForEach(Array(parsedEntries.prefix(5))) { item in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.title)
+                                        .font(.subheadline.bold())
+                                    Text(item.username.isEmpty ? "Sans identifiant" : item.username)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                if item.password != nil {
+                                    Text("🔑")
+                                        .font(.caption)
+                                }
+                                if item.totpSecret != nil {
+                                    Text("⏱️ 2FA")
+                                        .font(.caption2.bold())
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(themeColor.opacity(0.15))
+                                        .foregroundColor(themeColor)
+                                        .cornerRadius(4)
+                                }
+                            }
+                        }
+
+                        if parsedEntries.count > 5 {
+                            Text("... et \(parsedEntries.count - 5) autre(s) entrée(s)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Button {
+                            onImport(parsedEntries)
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            dismiss()
+                        } label: {
+                            Text("Importer ces \(parsedEntries.count) identifiant(s)")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(themeColor)
+                                .foregroundColor(.white)
+                                .cornerRadius(12)
+                        }
+                        .listRowInsets(EdgeInsets())
+                        .padding(.vertical, 6)
+                    }
+                }
+
+                if let err = importError {
+                    Section {
+                        Text(err)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+            .navigationTitle("Importer des données")
+            .navigationBarItems(leading: Button("Fermer") { dismiss() })
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: [.commaSeparatedText, .json, .plainText]
+            ) { result in
+                switch result {
+                case .success(let url):
+                    guard url.startAccessingSecurityScopedResource() else { return }
+                    defer { url.stopAccessingSecurityScopedResource() }
+                    if let data = try? Data(contentsOf: url),
+                       let content = String(data: data, encoding: .utf8) {
+                        importText = content
+                        parsedEntries = VaultImporterHelper.parse(text: content, filename: url.lastPathComponent)
+                    }
+                case .failure(let error):
+                    importError = error.localizedDescription
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// PARSEUR UNIVERSEL EN SWIFT (CSV, JSON, OTPAUTH)
+// -------------------------------------------------------------
+enum VaultImporterHelper {
+    static func parse(text: String, filename: String = "") -> [VaultEntry] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return [] }
+
+        // 1. JSON
+        if trimmed.starts(with: "{") {
+            if let data = trimmed.data(using: .utf8) {
+                if let doc = try? JSONDecoder().decode(VaultDocument.self, from: data) {
+                    return doc.entries
+                }
+                if let directEntries = try? JSONDecoder().decode([VaultEntry].self, from: data) {
+                    return directEntries
+                }
+            }
+        }
+
+        // 2. OTPAUTH URIs
+        if trimmed.lowercased().contains("otpauth://") {
+            var otpEntries: [VaultEntry] = []
+            let lines = trimmed.components(separatedBy: .newlines)
+            for line in lines {
+                let l = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if l.lowercased().starts(with: "otpauth://") {
+                    if let url = URL(string: l),
+                       let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                        let queryItems = components.queryItems ?? []
+                        let secret = queryItems.first(where: { $0.name.lowercased() == "secret" })?.value
+                        let issuer = queryItems.first(where: { $0.name.lowercased() == "issuer" })?.value
+                        let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                        let title = issuer ?? (path.isEmpty ? "Compte 2FA" : path)
+                        let username = path.contains(":") ? String(path.split(separator: ":").last ?? "") : (issuer != nil ? path : "")
+                        otpEntries.append(VaultEntry(
+                            title: title,
+                            username: username,
+                            totpSecret: secret,
+                            category: "Personnel"
+                        ))
+                    }
+                }
+            }
+            if !otpEntries.isEmpty { return otpEntries }
+        }
+
+        // 3. CSV
+        return parseCSV(text: trimmed)
+    }
+
+    private static func parseCSV(text: String) -> [VaultEntry] {
+        var lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if lines.isEmpty { return [] }
+
+        let delimiter: Character = text.contains(";") && !text.contains(",") ? ";" : ","
+        let headerLine = lines.removeFirst()
+        let headers = splitCsvRow(headerLine, delimiter: delimiter).map { $0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "\" ")) }
+
+        let titleIdx = headers.firstIndex(where: { $0 == "name" || $0 == "title" || $0 == "site" }) ?? -1
+        let urlIdx = headers.firstIndex(where: { $0 == "url" || $0 == "login_uri" || $0 == "website" }) ?? -1
+        let userIdx = headers.firstIndex(where: { $0 == "username" || $0 == "login_username" || $0 == "login" || $0 == "identifiant" || $0 == "user" }) ?? -1
+        let passIdx = headers.firstIndex(where: { $0 == "password" || $0 == "login_password" || $0 == "mot de passe" || $0 == "pwd" }) ?? -1
+        let notesIdx = headers.firstIndex(where: { $0 == "notes" || $0 == "note" || $0 == "commentaire" }) ?? -1
+        let totpIdx = headers.firstIndex(where: { $0 == "totp" || $0 == "login_totp" || $0 == "otp" || $0 == "2fa" }) ?? -1
+
+        var result: [VaultEntry] = []
+        for line in lines {
+            let cols = splitCsvRow(line, delimiter: delimiter)
+            if cols.isEmpty { continue }
+
+            let url = (urlIdx >= 0 && urlIdx < cols.count) ? cols[urlIdx] : ""
+            var title = (titleIdx >= 0 && titleIdx < cols.count) ? cols[titleIdx] : ""
+            let username = (userIdx >= 0 && userIdx < cols.count) ? cols[userIdx] : ""
+            let password = (passIdx >= 0 && passIdx < cols.count) ? cols[passIdx] : ""
+            let notes = (notesIdx >= 0 && notesIdx < cols.count) ? cols[notesIdx] : ""
+            let totp = (totpIdx >= 0 && totpIdx < cols.count) ? cols[totpIdx] : ""
+
+            if title.isEmpty && !url.isEmpty {
+                if let u = URL(string: url), let host = u.host {
+                    title = host.replacingOccurrences(of: "www.", with: "")
+                } else {
+                    title = url
+                }
+            }
+            if title.isEmpty && !username.isEmpty {
+                title = username
+            }
+
+            if !title.isEmpty || !username.isEmpty || !password.isEmpty {
+                result.append(VaultEntry(
+                    title: title.isEmpty ? "Identifiant importé" : title,
+                    username: username,
+                    password: password.isEmpty ? nil : password,
+                    url: url.isEmpty ? nil : url,
+                    notes: notes.isEmpty ? nil : notes,
+                    totpSecret: totp.isEmpty ? nil : totp,
+                    category: "Personnel"
+                ))
+            }
+        }
+        return result
+    }
+
+    private static func splitCsvRow(_ row: String, delimiter: Character) -> [String] {
+        var fields: [String] = []
+        var current = ""
+        var inQuotes = false
+
+        for char in row {
+            if char == "\"" {
+                inQuotes.toggle()
+            } else if char == delimiter && !inQuotes {
+                fields.append(current.trimmingCharacters(in: CharacterSet(charactersIn: "\" ")))
+                current = ""
+            } else {
+                current.append(char)
+            }
+        }
+        fields.append(current.trimmingCharacters(in: CharacterSet(charactersIn: "\" ")))
+        return fields
+    }
+}
+

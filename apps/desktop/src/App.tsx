@@ -31,6 +31,15 @@ type OpenVaultResult = {
   vault_path?: string | null
 }
 
+type CloudSyncPreset = {
+  id: string
+  name: string
+  service: string
+  path: string
+  exists: boolean
+  description: string
+}
+
 type SortOption = 'title-asc' | 'title-desc' | 'category' | 'recent'
 type ActiveFilter = 'all' | 'favorites' | 'totp' | 'Personnel' | 'Travail' | 'Finance'
 type AccentColor = 'emerald' | 'amber' | 'sapphire' | 'amethyst' | 'ruby'
@@ -222,6 +231,8 @@ function App() {
   })
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncFeedback, setSyncFeedback] = useState<{ text: string; error: boolean } | null>(null)
+  const [cloudPresets, setCloudPresets] = useState<CloudSyncPreset[]>([])
+  const [isLoadingPresets, setIsLoadingPresets] = useState(false)
 
   // Importation universelle
   const [importRawText, setImportRawText] = useState('')
@@ -769,6 +780,41 @@ function App() {
     }
   }
 
+  // Détection des presets cloud & sélection par explorateur natif
+  const loadCloudPresets = async () => {
+    setIsLoadingPresets(true)
+    try {
+      const presets = await invoke<CloudSyncPreset[]>('get_cloud_sync_presets')
+      setCloudPresets(presets)
+    } catch {
+      setCloudPresets([])
+    } finally {
+      setIsLoadingPresets(false)
+    }
+  }
+
+  const handleBrowseSyncFile = async () => {
+    try {
+      const picked = await invoke<string | null>('pick_sync_file')
+      if (picked) {
+        setSyncFilePath(picked)
+        localStorage.setItem('passapp_sync_file_path', picked)
+      }
+    } catch (err) {
+      console.error('Erreur explorateur natif :', err)
+    }
+  }
+
+  const handleSelectPreset = (preset: CloudSyncPreset) => {
+    setSyncFilePath(preset.path)
+    localStorage.setItem('passapp_sync_file_path', preset.path)
+  }
+
+  function openProfileModal() {
+    setIsProfileOpen(true)
+    void loadCloudPresets()
+  }
+
   // Exécution de l'importation universelle
   async function executeUniversalImport(itemsToImport: ImportedItem[]) {
     if (itemsToImport.length === 0) return
@@ -1313,7 +1359,7 @@ INSTRUCTIONS DE SÉCURITÉ :
         {/* PROFIL UTILISATEUR & RÉGLAGES */}
         <div
           className="profile-row clickable"
-          onClick={() => setIsProfileOpen(true)}
+          onClick={openProfileModal}
           role="button"
           tabIndex={0}
           title="Ouvrir les paramètres et réglages"
@@ -1329,7 +1375,7 @@ INSTRUCTIONS DE SÉCURITÉ :
             aria-label="Ouvrir les réglages"
             onClick={(e) => {
               e.stopPropagation()
-              setIsProfileOpen(true)
+              openProfileModal()
             }}
           >
             ⚙️
@@ -1380,6 +1426,20 @@ INSTRUCTIONS DE SÉCURITÉ :
             onClick={() => setActiveFilter('Finance')}
           >
             <span>💳</span> Finance <b>{isLocked ? '—' : categoryCounts.Finance}</b>
+          </button>
+          <div className="nav-divider" />
+          <button
+            className="nav-item import-nav-button"
+            type="button"
+            disabled={isLocked}
+            onClick={() => {
+              setIsImportOpen(true)
+              setParsedImport(null)
+              setImportRawText('')
+            }}
+            title="Importer des identifiants (Chrome, Bitwarden, 1Password, Google Authenticator...)"
+          >
+            <span>📥</span> <b>Importer des données</b>
           </button>
         </nav>
 
@@ -1894,8 +1954,65 @@ INSTRUCTIONS DE SÉCURITÉ :
                   </div>
                 </div>
               </>
+            ) : entries.length === 0 ? (
+              <div className="empty-vault-card">
+                <div className="empty-vault-icon">🛡️</div>
+                <h2>Votre coffre-fort PassApp est prêt</h2>
+                <p className="empty-vault-sub">
+                  Aucun mot de passe enregistré pour le moment. Vous pouvez importer instantanément
+                  toutes vos données existantes ou créer votre premier identifiant.
+                </p>
+                <div className="empty-vault-actions">
+                  <button
+                    type="button"
+                    className="primary-button highlight-button"
+                    onClick={() => {
+                      setIsImportOpen(true)
+                      setParsedImport(null)
+                      setImportRawText('')
+                    }}
+                  >
+                    <span>📥</span> Importer mes mots de passe (Chrome, Bitwarden, CSV, 2FA...)
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={openAddModal}
+                  >
+                    <span>➕</span> Créer un premier accès manuellement
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={openProfileModal}
+                  >
+                    <span>🔄</span> Configurer la synchronisation Cloud (OneDrive, iCloud...)
+                  </button>
+                </div>
+                <div className="empty-vault-features-grid">
+                  <div className="empty-feature-item">
+                    <span>🌐</span>
+                    <strong>Tous formats supportés</strong>
+                    <small>Chrome, Edge, Firefox, Bitwarden, 1Password, KeePass, CSV</small>
+                  </div>
+                  <div className="empty-feature-item">
+                    <span>🔑</span>
+                    <strong>Double facteur 2FA</strong>
+                    <small>Codes temporaires Authenticator RFC 6238 générés en direct</small>
+                  </div>
+                  <div className="empty-feature-item">
+                    <span>🔒</span>
+                    <strong>Zero-Knowledge</strong>
+                    <small>Chiffrement Argon2id + AES-256-GCM sans trace sur aucun serveur</small>
+                  </div>
+                </div>
+              </div>
             ) : (
-              <p className="empty-state">Sélectionnez une entrée ou créez-en une nouvelle.</p>
+              <div className="empty-selection-card">
+                <div className="empty-selection-icon">👈</div>
+                <h3>Sélectionnez un accès</h3>
+                <p>Choisissez un identifiant dans la colonne de gauche pour afficher ses détails et codes 2FA.</p>
+              </div>
             )}
           </section>
         </div>
@@ -2197,24 +2314,90 @@ INSTRUCTIONS DE SÉCURITÉ :
                 <div className="sync-card">
                   <div className="sync-status-row">
                     <span className="sync-status-indicator">
-                      {syncFilePath ? '🟢 Prêt pour la synchronisation' : '⚪ Emplacement non configuré'}
+                      {syncFilePath ? '🟢 Emplacement configuré' : '⚪ Aucun emplacement sélectionné'}
                     </span>
                     {lastSyncTime && <small className="last-sync-tag">Dernière synchro : {lastSyncTime}</small>}
                   </div>
 
+                  <div className="sync-presets-section">
+                    <span className="sync-section-subtitle">
+                      ☁️ 1. Choisissez votre service Cloud ou Réseau :
+                    </span>
+                    {isLoadingPresets ? (
+                      <p className="sync-loading-text">Recherche des dossiers cloud...</p>
+                    ) : cloudPresets.length > 0 ? (
+                      <div className="cloud-presets-grid">
+                        {cloudPresets.map((preset) => (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            className={`cloud-preset-card ${
+                              syncFilePath === preset.path ? 'selected' : ''
+                            }`}
+                            onClick={() => handleSelectPreset(preset)}
+                          >
+                            <div className="cloud-preset-header">
+                              <span className="cloud-preset-title">
+                                {preset.service === 'onedrive'
+                                  ? '☁️ OneDrive'
+                                  : preset.service === 'icloud'
+                                  ? '🍎 iCloud Drive'
+                                  : preset.service === 'googledrive'
+                                  ? '📂 Google Drive'
+                                  : preset.service === 'dropbox'
+                                  ? '📦 Dropbox'
+                                  : '📁 Dossier Local'}
+                              </span>
+                              <span
+                                className={`cloud-preset-status ${
+                                  preset.exists ? 'detected' : 'not-detected'
+                                }`}
+                              >
+                                {preset.exists ? '✓ Détecté' : 'Non détecté'}
+                              </span>
+                            </div>
+                            <span className="cloud-preset-desc">{preset.name}</span>
+                            <small className="cloud-preset-path">{preset.path}</small>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="cloud-presets-empty">
+                        <small>Utilisez le bouton ci-dessous pour choisir votre dossier partagé.</small>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="sync-browse-row">
+                    <span className="sync-section-subtitle">
+                      📁 2. Ou sélectionnez un dossier / fichier manuellement :
+                    </span>
+                    <button
+                      type="button"
+                      className="sync-browse-btn"
+                      onClick={() => void handleBrowseSyncFile()}
+                      title="Ouvrir l'explorateur de fichiers pour sélectionner vault.passapp"
+                    >
+                      📁 Parcourir sur mon ordinateur...
+                    </button>
+                  </div>
+
                   <label className="sync-input-label">
-                    <span>Chemin du coffre partagé (Cloud ou Réseau local) :</span>
+                    <span>Chemin actif du fichier partagé :</span>
                     <input
                       type="text"
                       value={syncFilePath}
-                      onChange={(e) => setSyncFilePath(e.target.value)}
-                      placeholder="ex: C:\Users\Nom\OneDrive\vault.passapp ou /Users/Nom/Library/Mobile Documents/com~apple~CloudDocs/vault.passapp"
+                      onChange={(e) => {
+                        setSyncFilePath(e.target.value)
+                        localStorage.setItem('passapp_sync_file_path', e.target.value)
+                      }}
+                      placeholder="ex: C:\Users\Nom\OneDrive\vault.passapp ou /Users/Nom/..."
                     />
                   </label>
 
                   <div className="sync-help-box">
                     <small>
-                      💡 <b>Astuce :</b> Placez une copie de votre fichier dans un dossier synchronisé par <b>OneDrive</b>, <b>iCloud Drive</b>, <b>Google Drive</b>, <b>Dropbox</b>, ou sur un <b>NAS local</b>. Vos données y restent 100% chiffrées.
+                      💡 <b>Local-First CRDT :</b> Placez ce fichier dans un dossier synchronisé par vos outils habituels (OneDrive, iCloud, Google Drive, Dropbox, Synology NAS). PassApp fusionne automatiquement les modifications sans conflit et sans serveur tiers.
                     </small>
                   </div>
 

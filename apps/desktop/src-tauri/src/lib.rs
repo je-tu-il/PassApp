@@ -488,6 +488,223 @@ fn sync_vault_with_file(
     })
 }
 
+#[derive(Serialize)]
+struct CloudPreset {
+    id: String,
+    name: String,
+    icon: String,
+    path: String,
+    folder_exists: bool,
+}
+
+#[tauri::command]
+fn get_cloud_sync_presets() -> Vec<CloudPreset> {
+    let mut presets = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            let base = PathBuf::from(&userprofile);
+
+            let onedrive = base.join("OneDrive");
+            presets.push(CloudPreset {
+                id: "onedrive".to_owned(),
+                name: "Microsoft OneDrive".to_owned(),
+                icon: "☁️".to_owned(),
+                path: onedrive.join("vault.passapp").to_string_lossy().to_string(),
+                folder_exists: onedrive.exists(),
+            });
+
+            let icloud = base.join("iCloudDrive");
+            presets.push(CloudPreset {
+                id: "icloud".to_owned(),
+                name: "Apple iCloud Drive".to_owned(),
+                icon: "🍏".to_owned(),
+                path: icloud.join("vault.passapp").to_string_lossy().to_string(),
+                folder_exists: icloud.exists(),
+            });
+
+            let gdrive = base.join("Google Drive");
+            let gdrive_g = PathBuf::from("G:\\Mon Drive");
+            let gdrive_g_alt = PathBuf::from("G:\\My Drive");
+            let gdrive_path = if gdrive_g.exists() {
+                gdrive_g.join("vault.passapp")
+            } else if gdrive_g_alt.exists() {
+                gdrive_g_alt.join("vault.passapp")
+            } else {
+                gdrive.join("vault.passapp")
+            };
+            presets.push(CloudPreset {
+                id: "gdrive".to_owned(),
+                name: "Google Drive".to_owned(),
+                icon: "📁".to_owned(),
+                path: gdrive_path.to_string_lossy().to_string(),
+                folder_exists: gdrive.exists() || gdrive_g.exists() || gdrive_g_alt.exists(),
+            });
+
+            let dropbox = base.join("Dropbox");
+            presets.push(CloudPreset {
+                id: "dropbox".to_owned(),
+                name: "Dropbox".to_owned(),
+                icon: "📦".to_owned(),
+                path: dropbox.join("vault.passapp").to_string_lossy().to_string(),
+                folder_exists: dropbox.exists(),
+            });
+
+            let docs = base.join("Documents").join("PassAppSync");
+            presets.push(CloudPreset {
+                id: "documents".to_owned(),
+                name: "Dossier Documents / Réseau local".to_owned(),
+                icon: "💻".to_owned(),
+                path: docs.join("vault.passapp").to_string_lossy().to_string(),
+                folder_exists: true,
+            });
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let base = PathBuf::from(&home);
+
+            let icloud = base.join("Library/Mobile Documents/com~apple~CloudDocs");
+            presets.push(CloudPreset {
+                id: "icloud".to_owned(),
+                name: "iCloud Drive".to_owned(),
+                icon: "🍏".to_owned(),
+                path: icloud.join("vault.passapp").to_string_lossy().to_string(),
+                folder_exists: icloud.exists(),
+            });
+
+            let gdrive = base.join("Google Drive");
+            presets.push(CloudPreset {
+                id: "gdrive".to_owned(),
+                name: "Google Drive".to_owned(),
+                icon: "📁".to_owned(),
+                path: gdrive.join("vault.passapp").to_string_lossy().to_string(),
+                folder_exists: gdrive.exists(),
+            });
+
+            let onedrive = base.join("OneDrive");
+            presets.push(CloudPreset {
+                id: "onedrive".to_owned(),
+                name: "OneDrive".to_owned(),
+                icon: "☁️".to_owned(),
+                path: onedrive.join("vault.passapp").to_string_lossy().to_string(),
+                folder_exists: onedrive.exists(),
+            });
+
+            let dropbox = base.join("Dropbox");
+            presets.push(CloudPreset {
+                id: "dropbox".to_owned(),
+                name: "Dropbox".to_owned(),
+                icon: "📦".to_owned(),
+                path: dropbox.join("vault.passapp").to_string_lossy().to_string(),
+                folder_exists: dropbox.exists(),
+            });
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let base = PathBuf::from(&home);
+            let nextcloud = base.join("Nextcloud");
+            presets.push(CloudPreset {
+                id: "nextcloud".to_owned(),
+                name: "Nextcloud / ownCloud".to_owned(),
+                icon: "☁️".to_owned(),
+                path: nextcloud
+                    .join("vault.passapp")
+                    .to_string_lossy()
+                    .to_string(),
+                folder_exists: nextcloud.exists(),
+            });
+            let local_sync = base.join(".passapp-sync");
+            presets.push(CloudPreset {
+                id: "localsync".to_owned(),
+                name: "Dossier partagé local".to_owned(),
+                icon: "💻".to_owned(),
+                path: local_sync
+                    .join("vault.passapp")
+                    .to_string_lossy()
+                    .to_string(),
+                folder_exists: true,
+            });
+        }
+    }
+
+    presets
+}
+
+#[tauri::command]
+fn pick_sync_file() -> Result<Option<String>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let script = r#"
+            Add-Type -AssemblyName System.Windows.Forms
+            $dialog = New-Object System.Windows.Forms.OpenFileDialog
+            $dialog.Filter = "Coffre PassApp (*.passapp)|*.passapp|Tous les fichiers (*.*)|*.*"
+            $dialog.Title = "Sélectionner un coffre PassApp distant pour la synchronisation"
+            $dialog.CheckFileExists = $false
+            if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                Write-Output $dialog.FileName
+            }
+        "#;
+        let output = std::process::Command::new("powershell")
+            .args(&["-NoProfile", "-NonInteractive", "-Command", script])
+            .output()
+            .map_err(|e| format!("Impossible d'ouvrir le sélecteur: {e}"))?;
+        let res = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if res.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(res))
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let script = r#"
+            set theFile to choose file name with prompt "Sélectionner l'emplacement du coffre synchronisé :" default name "vault.passapp"
+            return POSIX path of theFile
+        "#;
+        let output = std::process::Command::new("osascript")
+            .args(&["-e", script])
+            .output()
+            .map_err(|e| format!("Impossible d'ouvrir le sélecteur: {e}"))?;
+        let res = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if res.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(res))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let output = std::process::Command::new("zenity")
+            .args(&[
+                "--file-selection",
+                "--save",
+                "--confirm-overwrite",
+                "--filename=vault.passapp",
+                "--title=Sélectionner l'emplacement du coffre partagé",
+            ])
+            .output();
+        if let Ok(out) = output {
+            let res = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if res.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(res))
+            }
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -508,7 +725,9 @@ pub fn run() {
             delete_vault_entry,
             change_master_password,
             open_vault_directory,
-            sync_vault_with_file
+            sync_vault_with_file,
+            get_cloud_sync_presets,
+            pick_sync_file
         ])
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
