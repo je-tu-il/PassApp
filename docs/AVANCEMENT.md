@@ -78,9 +78,10 @@ Progression :
 Verification complementaire :
 
 - `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml` passe ;
-- `cargo test --workspace` passe (10 tests reussis) ;
+- `cargo test --workspace` passe (11 tests reussis : 4 crypto, 6 sync, 1 integration e2e) ;
 - `cargo fmt --all -- --check` passe ;
-- `cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml` passe (`target/debug/app.exe` genere).
+- `cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml` passe (`target/debug/app.exe` genere) ;
+- CI GitHub Actions declenchee avec succes sur la branche `main`.
 
 ## Etapes suivantes
 
