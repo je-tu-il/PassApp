@@ -21,6 +21,18 @@ jobs:
       - name: Checkout du dépôt
         uses: actions/checkout@v4
 
+      - name: Installation des dépendances système Linux (GTK 3, WebKit, pkg-config)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            pkg-config \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev
+
       - name: Configuration de Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -179,11 +191,13 @@ jobs:
       - name: Checkout du dépôt
         uses: actions/checkout@v4
 
-      - name: Installation des dépendances système Linux (WebKit, GTK, AppIndicator)
+      - name: Installation des dépendances système Linux (WebKit, GTK 3, AppIndicator)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
+            pkg-config \
             build-essential \
             curl \
             wget \
@@ -191,7 +205,8 @@ jobs:
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            squashfs-tools
 
       - name: Configuration de Node.js
         uses: actions/setup-node@v4
