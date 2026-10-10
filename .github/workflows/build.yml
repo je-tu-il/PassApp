@@ -70,7 +70,7 @@ jobs:
         working-directory: apps/desktop
 
       - name: Typecheck et Build des contrats
-        run: npx tsc -p packages/contracts/tsconfig.json
+        run: npx --package=typescript tsc -p packages/contracts/tsconfig.json
 
   # -------------------------------------------------------------
   # JOB 2 : APPLICATION DESKTOP WINDOWS (.exe, .msi)
