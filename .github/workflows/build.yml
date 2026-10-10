@@ -117,15 +117,18 @@ jobs:
         run: npx @tauri-apps/cli build
         working-directory: apps/desktop
 
+      - name: Rassemblement des livrables Windows
+        shell: bash
+        run: |
+          mkdir -p dist-windows
+          find target apps/desktop/src-tauri/target -type f \( -name "*.msi" -o -name "*setup*.exe" -o -name "PassApp.exe" \) ! -name "*build*.exe" ! -name "app.exe" -exec cp {} dist-windows/ \; || true
+          ls -la dist-windows/
+
       - name: Archivage des livrables Windows
         uses: actions/upload-artifact@v4
         with:
           name: PassApp-Windows-x64
-          path: |
-            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
-            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
-            target/release/PassApp.exe
-            target/release/app.exe
+          path: dist-windows/*
           if-no-files-found: warn
 
   # -------------------------------------------------------------
@@ -171,13 +174,17 @@ jobs:
         run: npx @tauri-apps/cli build
         working-directory: apps/desktop
 
+      - name: Rassemblement des livrables macOS
+        run: |
+          mkdir -p dist-macos
+          find target apps/desktop/src-tauri/target -type f -name "*.dmg" -exec cp {} dist-macos/ \; || true
+          ls -la dist-macos/
+
       - name: Archivage des livrables macOS
         uses: actions/upload-artifact@v4
         with:
           name: PassApp-macOS-Universal
-          path: |
-            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
-            apps/desktop/src-tauri/target/release/bundle/macos/*.app
+          path: dist-macos/*
           if-no-files-found: warn
 
   # -------------------------------------------------------------
@@ -240,20 +247,24 @@ jobs:
         run: npx @tauri-apps/cli build
         working-directory: apps/desktop
 
+      - name: Rassemblement des livrables Linux
+        run: |
+          mkdir -p dist-linux
+          find target apps/desktop/src-tauri/target -type f \( -name "*.AppImage" -o -name "*.deb" \) -exec cp {} dist-linux/ \; || true
+          ls -la dist-linux/
+
       - name: Archivage des livrables Linux
         uses: actions/upload-artifact@v4
         with:
           name: PassApp-Linux-x64
-          path: |
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
-            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+          path: dist-linux/*
           if-no-files-found: warn
 
   # -------------------------------------------------------------
-  # JOB 5 : APPLICATION MOBILE IOS (SwiftUI & Credential Provider)
+  # JOB 5 : APPLICATION MOBILE IOS (Compilation native ARM64 & AltStore IPA)
   # -------------------------------------------------------------
   build-ios:
-    name: Build iOS App (SwiftUI & Credential Provider)
+    name: Build iOS App (SwiftUI & AltStore Sideload)
     needs: test-core
     runs-on: macos-latest
     steps:
@@ -263,26 +274,79 @@ jobs:
       - name: Sélection de la version Xcode
         run: sudo xcode-select -switch /Applications/Xcode.app
 
-      - name: Compilation du package Swift iOS
+      - name: Compilation et archivage iOS pour AltStore / SideStore
         run: |
-          cd apps/ios
-          swift build -v
-        continue-on-error: true
-
-      - name: Création du bundle iOS pour AltStore / SideStore
-        run: |
+          mkdir -p build/ios
+          xcodebuild -project apps/ios/PassApp.xcodeproj \
+            -scheme PassApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/ios/PassApp.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+          
           mkdir -p build/ios/Payload
-          # Copie des sources et génération du livrable sideload
-          cp -R apps/ios/PassApp build/ios/Payload/PassApp.app || true
+          cp -R build/ios/PassApp.xcarchive/Products/Applications/PassApp.app build/ios/Payload/
           cd build/ios
-          zip -r PassApp-AltStore.ipa Payload || true
+          zip -qr PassApp-AltStore.ipa Payload
+          ls -lh PassApp-AltStore.ipa
 
       - name: Archivage du bundle iOS
         uses: actions/upload-artifact@v4
         with:
           name: PassApp-iOS-Sideload
-          path: |
-            build/ios/*.ipa
-            apps/ios/PassApp
-            apps/ios/CredentialProvider
-          if-no-files-found: warn
+          path: build/ios/PassApp-AltStore.ipa
+          if-no-files-found: error
+
+  # -------------------------------------------------------------
+  # JOB 6 : PUBLICATION AUTOMATIQUE DE LA RELEASE GITHUB
+  # -------------------------------------------------------------
+  release:
+    name: Publication de la Release GitHub (Téléchargement direct)
+    needs: [build-windows, build-macos, build-linux, build-ios]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    steps:
+      - name: Téléchargement de tous les artefacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Rassemblement des fichiers finaux
+        run: |
+          mkdir -p release-files
+          find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.ipa" \) -exec cp {} release-files/ \;
+          ls -la release-files/
+
+      - name: Publication de la Release GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0
+          name: "PassApp v0.1.0 - Multiplatform Release"
+          body: |
+            ## Livrables officiels PassApp v0.1.0 🔐
+            
+            Les applications compilées pour l'ensemble des plateformes sont disponibles en téléchargement direct ci-dessous :
+            
+            - 🪟 **Windows (x64)** : `.exe` (installateur NSIS) ou `.msi`
+            - 🍏 **macOS (Universal / Apple Silicon & Intel)** : `.dmg` (image disque installable)
+            - 🐧 **Linux (x64)** : `.AppImage` (exécutable direct sans installation) ou `.deb` (Ubuntu / Debian)
+            - 📱 **iOS (iPhone & iPad)** : `PassApp-AltStore.ipa` (binaire natif compilé ARM64 prêt pour installation via AltStore, SideStore, Sideloadly ou TrollStore)
+            
+            ### Fonctionnalités intégrées :
+            - 🔒 **Chiffrement symétrique de niveau militaire** : AES-256-GCM avec tag MAC 128 bits et dérivation de clé Argon2id (19 Mo, 2 itérations).
+            - ⚡ **Analyseur de robustesse & entropie en direct** : calcul de la complexité (bits) et détection des faiblesses.
+            - 🎲 **Générateur de mots de passe hautement paramétrable** : longueur (8 à 48 car.), minuscules, majuscules, chiffres, symboles et exclusion des caractères ambigus.
+            - 🛡️ **Presse-papier auto-nettoyant** : compte à rebours de 30 secondes avec vidage automatique en mémoire pour prévenir toute fuite.
+            - ⏱️ **Verrouillage automatique par inactivité** : protège vos secrets dès que vous quittez votre poste.
+            - 💾 **Sauvegarde & Migration faciles** : export et import de sauvegardes sécurisées JSON.
+            - 🔄 **Architecture Local-First** : vos données restent chez vous, sans cloud imposé ni abonnement.
+          files: release-files/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

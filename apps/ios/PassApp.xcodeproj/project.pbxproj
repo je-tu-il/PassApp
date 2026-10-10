@@ -1,0 +1,263 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1A000001 /* PassAppApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000001 /* PassAppApp.swift */; };
+		1A000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000002 /* ContentView.swift */; };
+		1A000003 /* VaultModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000003 /* VaultModels.swift */; };
+		1A000004 /* CryptoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000004 /* CryptoService.swift */; };
+		1A000005 /* BiometricAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000005 /* BiometricAuthService.swift */; };
+		1A000006 /* iCloudSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000006 /* iCloudSyncService.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1B000000 /* PassApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PassApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1B000001 /* PassAppApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassAppApp.swift; sourceTree = "<group>"; };
+		1B000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		1B000003 /* VaultModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultModels.swift; sourceTree = "<group>"; };
+		1B000004 /* CryptoService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoService.swift; sourceTree = "<group>"; };
+		1B000005 /* BiometricAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuthService.swift; sourceTree = "<group>"; };
+		1B000006 /* iCloudSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iCloudSyncService.swift; sourceTree = "<group>"; };
+		1B000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1C000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1D000001 = {
+			isa = PBXGroup;
+			children = (
+				1D000002 /* PassApp */,
+				1D000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1D000002 /* PassApp */ = {
+			isa = PBXGroup;
+			children = (
+				1B000001 /* PassAppApp.swift */,
+				1B000007 /* Info.plist */,
+				1D000004 /* Views */,
+				1D000005 /* Models */,
+				1D000006 /* Services */,
+			);
+			path = PassApp;
+			sourceTree = "<group>";
+		};
+		1D000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1B000000 /* PassApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		1D000004 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				1B000002 /* ContentView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		1D000005 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				1B000003 /* VaultModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		1D000006 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				1B000004 /* CryptoService.swift */,
+				1B000005 /* BiometricAuthService.swift */,
+				1B000006 /* iCloudSyncService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1E000001 /* PassApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1F000001 /* Build configuration list for PBXNativeTarget "PassApp" */;
+			buildPhases = (
+				1C000002 /* Sources */,
+				1C000001 /* Frameworks */,
+				1C000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PassApp;
+			productName = PassApp;
+			productReference = 1B000000 /* PassApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		10000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					1E000001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 1F000002 /* Build configuration list for PBXProject "PassApp" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = fr;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				fr,
+				Base,
+			);
+			mainGroup = 1D000001;
+			productRefGroup = 1D000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1E000001 /* PassApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1C000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1C000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A000001 /* PassAppApp.swift in Sources */,
+				1A000002 /* ContentView.swift in Sources */,
+				1A000003 /* VaultModels.swift in Sources */,
+				1A000004 /* CryptoService.swift in Sources */,
+				1A000005 /* BiometricAuthService.swift in Sources */,
+				1A000006 /* iCloudSyncService.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1F000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_BITCODE = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PassApp/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.passapp.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1F000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_BITCODE = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PassApp/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.passapp.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		1F000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+			};
+			name = Debug;
+		};
+		1F000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1F000001 /* Build configuration list for PBXNativeTarget "PassApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1F000003 /* Debug */,
+				1F000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1F000002 /* Build configuration list for PBXProject "PassApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1F000005 /* Debug */,
+				1F000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+	};
+	rootObject = 10000001 /* Project object */;
+}
