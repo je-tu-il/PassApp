@@ -28,10 +28,14 @@ mod tests {
 
         // 3. Vérification du rejet en cas de mot de passe incorrect
         let wrong_password_result = decrypt(b"BadPassword!", &encrypted_payload);
-        assert_eq!(wrong_password_result, Err(CryptoError::AuthenticationFailed));
+        assert_eq!(
+            wrong_password_result,
+            Err(CryptoError::AuthenticationFailed)
+        );
 
         // 4. Déchiffrement avec le bon mot de passe maître
-        let decrypted_bytes = decrypt(master_password, &encrypted_payload).expect("Déchiffrement réussi");
+        let decrypted_bytes =
+            decrypt(master_password, &encrypted_payload).expect("Déchiffrement réussi");
         let restored_doc: VaultDocument =
             serde_json::from_slice(&decrypted_bytes).expect("Désérialisation valide");
 
