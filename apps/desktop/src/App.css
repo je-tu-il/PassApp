@@ -880,4 +880,539 @@ h2 { font-size: 18px; letter-spacing: -.4px; }
   border-color: var(--accent);
 }
 
+/* ========================================================
+   ONGLETS DE TYPE D'ÉLÉMENT (Identifiant, Note, Fichier)
+   ======================================================== */
+.item-type-tabs {
+  display: flex;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  gap: 4px;
+  margin: 12px 24px 0 24px;
+}
+
+.item-type-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.item-type-tab:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.item-type-tab.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* ========================================================
+   SECTION DOSSIERS & SOUS-DOSSIERS (SIDEBAR)
+   ======================================================== */
+.sidebar-folders-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.folders-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+}
+
+.folders-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.add-folder-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  transition: var(--transition);
+}
+
+.add-folder-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.folders-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.folder-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  transition: var(--transition);
+  position: relative;
+}
+
+.folder-tree-row:hover {
+  background: var(--bg-hover);
+  color: var(--text-main);
+}
+
+.folder-tree-row.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.folder-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.folder-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-count {
+  font-size: 10px;
+  padding: 1px 6px;
+  background: rgba(120, 120, 120, 0.15);
+  border-radius: 10px;
+  color: var(--text-dim);
+}
+
+.folder-row-actions {
+  display: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.folder-tree-row:hover .folder-row-actions {
+  display: flex;
+}
+
+.folder-sub-btn,
+.folder-action-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 11px;
+  transition: var(--transition);
+}
+
+.folder-sub-btn:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.folder-action-btn:hover {
+  color: var(--text-main);
+  background: var(--border);
+}
+
+.folder-action-btn.danger:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.empty-folders-hint {
+  padding: 8px 12px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* ========================================================
+   SÉLECTEUR DE DOSSIER DANS LE FORMULAIRE
+   ======================================================== */
+.folder-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.new-folder-inline-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.close-sm-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ========================================================
+   SECTION PIÈCES JOINTES DANS LE FORMULAIRE
+   ======================================================== */
+.form-attachments-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.attachments-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.file-upload-btn-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.file-upload-btn-label:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.form-attachments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.form-att-icon {
+  font-size: 16px;
+}
+
+.form-att-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.form-att-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.form-att-size {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.att-delete-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: var(--transition);
+}
+
+.att-delete-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.attachments-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 18px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.attachments-dropzone small {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* ========================================================
+   BADGES DANS LA LISTE DES ENTRÉES
+   ======================================================== */
+.entry-folder-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.entry-att-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 5px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  margin-left: 4px;
+}
+
+/* ========================================================
+   VUE NOTE SÉCURISÉE (DETAIL PANE)
+   ======================================================== */
+.note-view-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+}
+
+.note-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--border);
+}
+
+.note-view-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.note-stats-tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: rgba(120, 120, 120, 0.15);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.note-content-display {
+  padding: 20px;
+  min-height: 180px;
+  max-height: 500px;
+  overflow-y: auto;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-main);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.note-content-display pre {
+  margin: 0;
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.empty-note-txt {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* ========================================================
+   VUE PIÈCES JOINTES & FICHIERS PROTÉGÉS (DETAIL PANE)
+   ======================================================== */
+.attachments-view-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.attachments-view-header label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.attachments-view-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attachment-view-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.attachment-view-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.att-large-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.attachment-view-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.attachment-view-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-view-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.download-att-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  flex-shrink: 0;
+}
+
+.download-att-btn:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.attachment-preview-box {
+  border-radius: 6px;
+  overflow: hidden;
+  max-height: 240px;
+  background: rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+}
+
+.attachment-preview-img {
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+}
+
+.empty-attachments-notice {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.small-modal {
+  max-width: 440px !important;
+}
+
+
 

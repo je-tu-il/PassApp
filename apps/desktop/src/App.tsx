@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { type VaultEntry } from './contracts'
+import { type VaultEntry, type VaultAttachment, type ItemType } from './contracts'
 import { generateTotpCode, getTotpRemainingSeconds, parseOtpAuthUri } from './totp'
 import { parseUniversalImport, type ImportedItem } from './importer'
 import './App.css'
@@ -10,6 +10,15 @@ type AppStatus = {
   vault_exists: boolean
   storage: string
   vault_path: string | null
+}
+
+type BackendVaultAttachment = {
+  id: string
+  name: string
+  size: number
+  mime_type: string
+  data: string
+  updated_at?: number
 }
 
 type BackendVaultEntry = {
@@ -23,11 +32,15 @@ type BackendVaultEntry = {
   category: string
   favorite: boolean
   updated_at: number
+  folder?: string | null
+  item_type?: string | null
+  attachments?: BackendVaultAttachment[]
 }
 
 type OpenVaultResult = {
   vault_locked: boolean
   entries: BackendVaultEntry[]
+  custom_folders?: string[]
   vault_path?: string | null
 }
 
@@ -41,7 +54,7 @@ type CloudSyncPreset = {
 }
 
 type SortOption = 'title-asc' | 'title-desc' | 'category' | 'recent'
-type ActiveFilter = 'all' | 'favorites' | 'totp' | 'Personnel' | 'Travail' | 'Finance'
+type ActiveFilter = 'all' | 'favorites' | 'totp' | 'notes' | 'files' | 'Personnel' | 'Travail' | 'Finance'
 type AccentColor = 'emerald' | 'amber' | 'sapphire' | 'amethyst' | 'ruby'
 type ThemeMode = 'dark' | 'light'
 
@@ -69,6 +82,12 @@ const WORD_POOL = [
   'vallee', 'vigie', 'zodiaque', 'zenith', 'comete', 'faucon',
 ]
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} o`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`
+}
+
 function fromBackendEntry(entry: BackendVaultEntry): VaultEntry {
   let formatted = 'Enregistré'
   if (entry.updated_at > 0) {
@@ -83,7 +102,7 @@ function fromBackendEntry(entry: BackendVaultEntry): VaultEntry {
   return {
     id: entry.id,
     title: entry.title,
-    username: entry.username,
+    username: entry.username || '',
     password: entry.password || undefined,
     url: entry.url || undefined,
     notes: entry.notes || undefined,
@@ -91,6 +110,18 @@ function fromBackendEntry(entry: BackendVaultEntry): VaultEntry {
     category: (entry.category as 'Finance' | 'Travail' | 'Personnel') || 'Personnel',
     favorite: entry.favorite,
     updatedAt: formatted,
+    folder: entry.folder || undefined,
+    itemType: (entry.item_type as ItemType) || 'login',
+    attachments: entry.attachments
+      ? entry.attachments.map((a) => ({
+          id: a.id,
+          name: a.name,
+          size: a.size,
+          mimeType: a.mime_type,
+          data: a.data,
+          updatedAt: a.updated_at,
+        }))
+      : [],
   }
 }
 
@@ -251,6 +282,7 @@ function App() {
   const [generatedPassword, setGeneratedPassword] = useState('')
 
   // Formulaire d'ajout / édition
+  const [formItemType, setFormItemType] = useState<ItemType>('login')
   const [formTitle, setFormTitle] = useState('')
   const [formUsername, setFormUsername] = useState('')
   const [formPassword, setFormPassword] = useState('')
@@ -259,6 +291,17 @@ function App() {
   const [formTotpSecret, setFormTotpSecret] = useState('')
   const [formCategory, setFormCategory] = useState<'Personnel' | 'Travail' | 'Finance'>('Personnel')
   const [formFavorite, setFormFavorite] = useState(false)
+  const [formFolder, setFormFolder] = useState('')
+  const [formAttachments, setFormAttachments] = useState<VaultAttachment[]>([])
+  const [isCreatingNewFolderInForm, setIsCreatingNewFolderInForm] = useState(false)
+  const [formNewFolderInput, setFormNewFolderInput] = useState('')
+
+  // Gestion des dossiers & sous-dossiers
+  const [customFolders, setCustomFolders] = useState<string[]>([])
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
+  const [folderModalMode, setFolderModalMode] = useState<'create' | 'rename' | null>(null)
+  const [folderTargetName, setFolderTargetName] = useState('')
+  const [newFolderNameInput, setNewFolderNameInput] = useState('')
 
   // Changement de mot de passe
   const [currentMasterPassword, setCurrentMasterPassword] = useState('')
@@ -300,6 +343,8 @@ function App() {
         const loaded = backendEntries.map(fromBackendEntry)
         setEntries(loaded)
         if (loaded.length > 0) setSelectedId(loaded[0].id)
+        const folders = await invoke<string[]>('get_custom_folders').catch(() => [])
+        setCustomFolders(folders)
       })
       .catch(() => {
         // Mode démo navigateur
@@ -328,6 +373,8 @@ function App() {
       all: entries.length,
       favorites: entries.filter((e) => e.favorite).length,
       totp: entries.filter((e) => Boolean(e.totpSecret)).length,
+      notes: entries.filter((e) => e.itemType === 'note').length,
+      files: entries.filter((e) => e.itemType === 'file' || (e.attachments && e.attachments.length > 0)).length,
       Personnel: entries.filter((e) => e.category === 'Personnel').length,
       Travail: entries.filter((e) => e.category === 'Travail').length,
       Finance: entries.filter((e) => e.category === 'Finance').length,
@@ -382,10 +429,15 @@ function App() {
     }
   }
 
-  function openAddModal() {
+  function openAddModal(defaultType: ItemType = 'login', defaultFolder?: string) {
+    setFormItemType(defaultType)
+    setFormFolder(defaultFolder !== undefined ? defaultFolder : (selectedFolder || ''))
+    setFormAttachments([])
+    setIsCreatingNewFolderInForm(false)
+    setFormNewFolderInput('')
     setFormTitle('')
     setFormUsername('')
-    setFormPassword(generatePasswordWithOptions(genConfig))
+    setFormPassword(defaultType === 'login' ? generatePasswordWithOptions(genConfig) : '')
     setFormUrl('')
     setFormNotes('')
     setFormTotpSecret('')
@@ -460,17 +512,28 @@ function App() {
         matchesFilter = entry.favorite
       } else if (activeFilter === 'totp') {
         matchesFilter = Boolean(entry.totpSecret)
+      } else if (activeFilter === 'notes') {
+        matchesFilter = entry.itemType === 'note'
+      } else if (activeFilter === 'files') {
+        matchesFilter = Boolean(entry.itemType === 'file' || (entry.attachments && entry.attachments.length > 0))
       } else if (activeFilter !== 'all') {
         matchesFilter = entry.category === activeFilter
       }
 
+      let matchesFolder = true
+      if (selectedFolder) {
+        matchesFolder =
+          entry.folder === selectedFolder ||
+          (entry.folder ? entry.folder.startsWith(selectedFolder + '/') : false)
+      }
+
       const matchesQuery =
         !normalizedQuery ||
-        `${entry.title} ${entry.username} ${entry.category} ${entry.url || ''} ${entry.notes || ''}`
+        `${entry.title} ${entry.username} ${entry.category} ${entry.folder || ''} ${entry.url || ''} ${entry.notes || ''}`
           .toLowerCase()
           .includes(normalizedQuery)
 
-      return matchesFilter && matchesQuery
+      return matchesFilter && matchesFolder && matchesQuery
     })
 
     return filtered.sort((a, b) => {
@@ -482,7 +545,188 @@ function App() {
       }
       return 0
     })
-  }, [activeFilter, entries, isLocked, query, sortBy])
+  }, [activeFilter, entries, isLocked, query, selectedFolder, sortBy])
+
+  // Dossiers connus (arborescence)
+  const allKnownFolders = useMemo(() => {
+    const set = new Set<string>()
+    for (const f of customFolders) {
+      if (f.trim()) set.add(f.trim())
+    }
+    for (const e of entries) {
+      if (e.folder && e.folder.trim()) {
+        set.add(e.folder.trim())
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [customFolders, entries])
+
+  function getFolderItemCount(folderPath: string): number {
+    return entries.filter(
+      (e) => e.folder === folderPath || (e.folder ? e.folder.startsWith(folderPath + '/') : false)
+    ).length
+  }
+
+  function downloadAttachment(att: VaultAttachment) {
+    try {
+      const dataUrl = att.data.startsWith('data:')
+        ? att.data
+        : `data:${att.mimeType || 'application/octet-stream'};base64,${att.data}`
+      const anchor = document.createElement('a')
+      anchor.href = dataUrl
+      anchor.download = att.name
+      document.body.appendChild(anchor)
+      anchor.click()
+      document.body.removeChild(anchor)
+    } catch (err) {
+      alert(`Impossible de télécharger la pièce jointe : ${err}`)
+    }
+  }
+
+  async function handleFileUpload(files: FileList | null) {
+    if (!files || files.length === 0) return
+    const newAttachments: VaultAttachment[] = []
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      if (file.size > 15 * 1024 * 1024) {
+        alert(`Le fichier "${file.name}" dépasse la limite recommandée de 15 Mo.`)
+        continue
+      }
+
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+
+      newAttachments.push({
+        id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: file.name,
+        size: file.size,
+        mimeType: file.type || 'application/octet-stream',
+        data: base64,
+        updatedAt: Math.floor(Date.now() / 1000),
+      })
+    }
+
+    setFormAttachments((prev) => [...prev, ...newAttachments])
+  }
+
+  async function handleCreateFolder(folderPath: string) {
+    const clean = folderPath.trim().replace(/^\/+|\/+$/g, '')
+    if (!clean) return
+    if (isBrowserMode) {
+      setCustomFolders((prev) => Array.from(new Set([...prev, clean])).sort())
+      setSelectedFolder(clean)
+      setFolderModalMode(null)
+      return
+    }
+
+    const updated = await invoke<string[]>('create_custom_folder', { folder: clean }).catch((err) => {
+      alert(`Erreur création dossier : ${err}`)
+      return null
+    })
+    if (updated) {
+      setCustomFolders(updated)
+      setSelectedFolder(clean)
+      setFolderModalMode(null)
+    }
+  }
+
+  async function handleRenameFolder(oldName: string, newName: string) {
+    const cleanOld = oldName.trim()
+    const cleanNew = newName.trim().replace(/^\/+|\/+$/g, '')
+    if (!cleanNew || cleanOld === cleanNew) {
+      setFolderModalMode(null)
+      return
+    }
+
+    if (isBrowserMode) {
+      setCustomFolders((prev) =>
+        Array.from(new Set(prev.map((f) => (f === cleanOld ? cleanNew : f.startsWith(cleanOld + '/') ? cleanNew + f.slice(cleanOld.length) : f)))).sort()
+      )
+      setEntries((prev) =>
+        prev.map((e) => {
+          if (e.folder === cleanOld) return { ...e, folder: cleanNew }
+          if (e.folder?.startsWith(cleanOld + '/')) {
+            return { ...e, folder: cleanNew + e.folder.slice(cleanOld.length) }
+          }
+          return e
+        })
+      )
+      if (selectedFolder === cleanOld) setSelectedFolder(cleanNew)
+      setFolderModalMode(null)
+      return
+    }
+
+    const updated = await invoke<string[]>('rename_custom_folder', {
+      oldName: cleanOld,
+      newName: cleanNew,
+    }).catch((err) => {
+      alert(`Erreur renommage dossier : ${err}`)
+      return null
+    })
+
+    if (updated) {
+      setCustomFolders(updated)
+      setEntries((prev) =>
+        prev.map((e) => {
+          if (e.folder === cleanOld) return { ...e, folder: cleanNew }
+          if (e.folder?.startsWith(cleanOld + '/')) {
+            return { ...e, folder: cleanNew + e.folder.slice(cleanOld.length) }
+          }
+          return e
+        })
+      )
+      if (selectedFolder === cleanOld) setSelectedFolder(cleanNew)
+      setFolderModalMode(null)
+    }
+  }
+
+  async function handleDeleteFolder(folderPath: string) {
+    const clean = folderPath.trim()
+    if (!window.confirm(`Supprimer le dossier "${clean}" ? Les entrées associées ne seront pas effacées mais deviendront non classées.`)) {
+      return
+    }
+
+    if (isBrowserMode) {
+      setCustomFolders((prev) => prev.filter((f) => f !== clean && !f.startsWith(clean + '/')))
+      setEntries((prev) =>
+        prev.map((e) => {
+          if (e.folder === clean || e.folder?.startsWith(clean + '/')) {
+            return { ...e, folder: undefined }
+          }
+          return e
+        })
+      )
+      if (selectedFolder === clean || selectedFolder?.startsWith(clean + '/')) {
+        setSelectedFolder(null)
+      }
+      return
+    }
+
+    const updated = await invoke<string[]>('delete_custom_folder', { folder: clean }).catch((err) => {
+      alert(`Erreur suppression dossier : ${err}`)
+      return null
+    })
+
+    if (updated) {
+      setCustomFolders(updated)
+      setEntries((prev) =>
+        prev.map((e) => {
+          if (e.folder === clean || e.folder?.startsWith(clean + '/')) {
+            return { ...e, folder: undefined }
+          }
+          return e
+        })
+      )
+      if (selectedFolder === clean || selectedFolder?.startsWith(clean + '/')) {
+        setSelectedFolder(null)
+      }
+    }
+  }
 
   const selectedEntry = entries.find((entry) => entry.id === selectedId) ?? visibleEntries[0]
 
@@ -509,6 +753,7 @@ function App() {
     setEntries(loaded)
     if (loaded.length > 0) setSelectedId(loaded[0].id)
     if (result.vault_path) setVaultPath(result.vault_path)
+    if (result.custom_folders) setCustomFolders(result.custom_folders)
     setIsLocked(false)
     setOpenError('')
     setPassword('')
@@ -616,18 +861,26 @@ function App() {
     e.preventDefault()
     if (!formTitle.trim()) return
 
+    const folderVal = formFolder.trim() || undefined
+
     if (isBrowserMode) {
       const newEntry: VaultEntry = {
         id: `entry-${Date.now()}`,
         title: formTitle.trim(),
-        username: formUsername.trim(),
-        password: formPassword || undefined,
+        username: formItemType === 'login' ? formUsername.trim() : '',
+        password: formItemType === 'login' ? formPassword || undefined : undefined,
         url: formUrl.trim() || undefined,
         notes: formNotes.trim() || undefined,
-        totpSecret: formTotpSecret.trim() || undefined,
+        totpSecret: formItemType === 'login' ? formTotpSecret.trim() || undefined : undefined,
         category: formCategory,
         favorite: formFavorite,
         updatedAt: "À l'instant",
+        folder: folderVal,
+        itemType: formItemType,
+        attachments: formAttachments.length > 0 ? formAttachments : undefined,
+      }
+      if (folderVal && !customFolders.includes(folderVal)) {
+        setCustomFolders((prev) => Array.from(new Set([...prev, folderVal])).sort())
       }
       setEntries([newEntry, ...entries])
       setSelectedId(newEntry.id)
@@ -638,13 +891,16 @@ function App() {
     const created = await invoke<BackendVaultEntry>('create_vault_entry', {
       entry: {
         title: formTitle.trim(),
-        username: formUsername.trim(),
-        password: formPassword || null,
+        username: formItemType === 'login' ? formUsername.trim() : '',
+        password: formItemType === 'login' ? formPassword || null : null,
         url: formUrl.trim() || null,
         notes: formNotes.trim() || null,
-        totp_secret: formTotpSecret.trim() || null,
+        totp_secret: formItemType === 'login' ? formTotpSecret.trim() || null : null,
         category: formCategory,
         favorite: formFavorite,
+        folder: folderVal || null,
+        item_type: formItemType,
+        attachments: formAttachments,
       },
     }).catch((err) => {
       alert(`Erreur lors de la création : ${err}`)
@@ -656,11 +912,21 @@ function App() {
       setEntries([converted, ...entries])
       setSelectedId(converted.id)
       setIsAddEntryOpen(false)
+      if (folderVal && !customFolders.includes(folderVal)) {
+        void invoke<string[]>('create_custom_folder', { folder: folderVal }).then((updated) => {
+          if (updated) setCustomFolders(updated)
+        }).catch(() => {})
+      }
     }
   }
 
   // Édition d'entrée
   function openEditModal(entry: VaultEntry) {
+    setFormItemType(entry.itemType || 'login')
+    setFormFolder(entry.folder || '')
+    setFormAttachments(entry.attachments ? [...entry.attachments] : [])
+    setIsCreatingNewFolderInForm(false)
+    setFormNewFolderInput('')
     setFormTitle(entry.title)
     setFormUsername(entry.username)
     setFormPassword(entry.password || '')
@@ -677,18 +943,26 @@ function App() {
     e.preventDefault()
     if (!selectedEntry) return
 
+    const folderVal = formFolder.trim() || undefined
+
     if (isBrowserMode) {
       const updated: VaultEntry = {
         ...selectedEntry,
         title: formTitle.trim(),
-        username: formUsername.trim(),
-        password: formPassword || undefined,
+        username: formItemType === 'login' ? formUsername.trim() : '',
+        password: formItemType === 'login' ? formPassword || undefined : undefined,
         url: formUrl.trim() || undefined,
         notes: formNotes.trim() || undefined,
-        totpSecret: formTotpSecret.trim() || undefined,
+        totpSecret: formItemType === 'login' ? formTotpSecret.trim() || undefined : undefined,
         category: formCategory,
         favorite: formFavorite,
         updatedAt: "À l'instant",
+        folder: folderVal,
+        itemType: formItemType,
+        attachments: formAttachments.length > 0 ? formAttachments : undefined,
+      }
+      if (folderVal && !customFolders.includes(folderVal)) {
+        setCustomFolders((prev) => Array.from(new Set([...prev, folderVal])).sort())
       }
       setEntries(entries.map((item) => (item.id === updated.id ? updated : item)))
       setIsEditEntryOpen(false)
@@ -699,13 +973,16 @@ function App() {
       entry: {
         id: selectedEntry.id,
         title: formTitle.trim(),
-        username: formUsername.trim(),
-        password: formPassword || null,
+        username: formItemType === 'login' ? formUsername.trim() : '',
+        password: formItemType === 'login' ? formPassword || null : null,
         url: formUrl.trim() || null,
         notes: formNotes.trim() || null,
-        totp_secret: formTotpSecret.trim() || null,
+        totp_secret: formItemType === 'login' ? formTotpSecret.trim() || null : null,
         category: formCategory,
         favorite: formFavorite,
+        folder: folderVal || null,
+        item_type: formItemType,
+        attachments: formAttachments,
       },
     }).catch((err) => {
       alert(`Erreur de modification : ${err}`)
@@ -716,6 +993,11 @@ function App() {
       const converted = fromBackendEntry(updated)
       setEntries(entries.map((item) => (item.id === converted.id ? converted : item)))
       setIsEditEntryOpen(false)
+      if (folderVal && !customFolders.includes(folderVal)) {
+        void invoke<string[]>('create_custom_folder', { folder: folderVal }).then((f) => {
+          if (f) setCustomFolders(f)
+        }).catch(() => {})
+      }
     }
   }
 
@@ -1385,48 +1667,181 @@ INSTRUCTIONS DE SÉCURITÉ :
         {/* NAVIGATION PAR CATÉGORIE */}
         <nav aria-label="Catégories du coffre">
           <button
-            className={activeFilter === 'all' ? 'nav-item active' : 'nav-item'}
+            className={activeFilter === 'all' && !selectedFolder ? 'nav-item active' : 'nav-item'}
             type="button"
-            onClick={() => setActiveFilter('all')}
+            onClick={() => {
+              setActiveFilter('all')
+              setSelectedFolder(null)
+            }}
           >
             <span>▦</span> Mon coffre <b>{isLocked ? '—' : categoryCounts.all}</b>
           </button>
           <button
-            className={activeFilter === 'favorites' ? 'nav-item active' : 'nav-item'}
+            className={activeFilter === 'favorites' && !selectedFolder ? 'nav-item active' : 'nav-item'}
             type="button"
-            onClick={() => setActiveFilter('favorites')}
+            onClick={() => {
+              setActiveFilter('favorites')
+              setSelectedFolder(null)
+            }}
           >
             <span>★</span> Favoris <b>{isLocked ? '—' : categoryCounts.favorites}</b>
           </button>
           <button
-            className={activeFilter === 'totp' ? 'nav-item active' : 'nav-item'}
+            className={activeFilter === 'totp' && !selectedFolder ? 'nav-item active' : 'nav-item'}
             type="button"
-            onClick={() => setActiveFilter('totp')}
+            onClick={() => {
+              setActiveFilter('totp')
+              setSelectedFolder(null)
+            }}
           >
             <span>🔑</span> Authenticator 2FA <b>{isLocked ? '—' : categoryCounts.totp}</b>
           </button>
+          <button
+            className={activeFilter === 'notes' && !selectedFolder ? 'nav-item active' : 'nav-item'}
+            type="button"
+            onClick={() => {
+              setActiveFilter('notes')
+              setSelectedFolder(null)
+            }}
+          >
+            <span>📝</span> Notes sécurisées <b>{isLocked ? '—' : categoryCounts.notes}</b>
+          </button>
+          <button
+            className={activeFilter === 'files' && !selectedFolder ? 'nav-item active' : 'nav-item'}
+            type="button"
+            onClick={() => {
+              setActiveFilter('files')
+              setSelectedFolder(null)
+            }}
+          >
+            <span>📁</span> Fichiers protégés <b>{isLocked ? '—' : categoryCounts.files}</b>
+          </button>
+
           <div className="nav-divider" />
           <button
-            className={activeFilter === 'Personnel' ? 'nav-item active' : 'nav-item'}
+            className={activeFilter === 'Personnel' && !selectedFolder ? 'nav-item active' : 'nav-item'}
             type="button"
-            onClick={() => setActiveFilter('Personnel')}
+            onClick={() => {
+              setActiveFilter('Personnel')
+              setSelectedFolder(null)
+            }}
           >
             <span>👤</span> Personnel <b>{isLocked ? '—' : categoryCounts.Personnel}</b>
           </button>
           <button
-            className={activeFilter === 'Travail' ? 'nav-item active' : 'nav-item'}
+            className={activeFilter === 'Travail' && !selectedFolder ? 'nav-item active' : 'nav-item'}
             type="button"
-            onClick={() => setActiveFilter('Travail')}
+            onClick={() => {
+              setActiveFilter('Travail')
+              setSelectedFolder(null)
+            }}
           >
             <span>💼</span> Travail <b>{isLocked ? '—' : categoryCounts.Travail}</b>
           </button>
           <button
-            className={activeFilter === 'Finance' ? 'nav-item active' : 'nav-item'}
+            className={activeFilter === 'Finance' && !selectedFolder ? 'nav-item active' : 'nav-item'}
             type="button"
-            onClick={() => setActiveFilter('Finance')}
+            onClick={() => {
+              setActiveFilter('Finance')
+              setSelectedFolder(null)
+            }}
           >
             <span>💳</span> Finance <b>{isLocked ? '—' : categoryCounts.Finance}</b>
           </button>
+
+          {/* SECTION DOSSIERS & SOUS-DOSSIERS HIERARCHIQUES */}
+          <div className="nav-divider" />
+          <div className="sidebar-folders-section">
+            <div className="folders-header">
+              <span className="folders-title">DOSSIERS & SOUS-DOSSIERS</span>
+              {!isLocked && (
+                <button
+                  type="button"
+                  className="add-folder-btn"
+                  onClick={() => {
+                    setFolderModalMode('create')
+                    setFolderTargetName('')
+                    setNewFolderNameInput('')
+                  }}
+                  title="Créer un nouveau dossier ou sous-dossier"
+                >
+                  +
+                </button>
+              )}
+            </div>
+
+            <div className="folders-tree">
+              {allKnownFolders.map((folderPath) => {
+                const depth = folderPath.split('/').length - 1
+                const displayName = folderPath.split('/').pop() || folderPath
+                const count = getFolderItemCount(folderPath)
+                const isSelected = selectedFolder === folderPath
+
+                return (
+                  <div
+                    key={folderPath}
+                    className={`folder-tree-row ${isSelected ? 'active' : ''}`}
+                    style={{ paddingLeft: `${10 + depth * 14}px` }}
+                    onClick={() => {
+                      setSelectedFolder(isSelected ? null : folderPath)
+                      if (!isSelected) {
+                        setActiveFilter('all')
+                      }
+                    }}
+                    title={folderPath}
+                  >
+                    <span className="folder-icon">📁</span>
+                    <span className="folder-name">{displayName}</span>
+                    <span className="folder-count">{isLocked ? '—' : count}</span>
+
+                    {!isLocked && (
+                      <div className="folder-row-actions" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          className="folder-sub-btn"
+                          onClick={() => {
+                            setFolderModalMode('create')
+                            setFolderTargetName(folderPath + '/')
+                            setNewFolderNameInput(folderPath + '/')
+                          }}
+                          title={`Créer un sous-dossier dans ${displayName}`}
+                        >
+                          +
+                        </button>
+                        <button
+                          type="button"
+                          className="folder-action-btn"
+                          onClick={() => {
+                            setFolderModalMode('rename')
+                            setFolderTargetName(folderPath)
+                            setNewFolderNameInput(folderPath)
+                          }}
+                          title="Renommer ce dossier"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          type="button"
+                          className="folder-action-btn danger"
+                          onClick={() => void handleDeleteFolder(folderPath)}
+                          title="Supprimer ce dossier"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+
+              {allKnownFolders.length === 0 && !isLocked && (
+                <div className="empty-folders-hint">
+                  <small>Cliquez sur + pour créer votre premier dossier ou sous-dossier (ex: Projets/Web).</small>
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="nav-divider" />
           <button
             className="nav-item import-nav-button"
@@ -1499,12 +1914,18 @@ INSTRUCTIONS DE SÉCURITÉ :
           <div>
             <p className="eyebrow">COFFRE-FORT SOUVERAIN</p>
             <h1>
-              {activeFilter === 'all'
+              {selectedFolder
+                ? `Dossier : ${selectedFolder}`
+                : activeFilter === 'all'
                 ? 'Tous les identifiants'
                 : activeFilter === 'favorites'
                 ? 'Mes favoris'
                 : activeFilter === 'totp'
                 ? 'Authenticator 2FA (TOTP)'
+                : activeFilter === 'notes'
+                ? 'Notes sécurisées'
+                : activeFilter === 'files'
+                ? 'Fichiers protégés'
                 : activeFilter}
             </h1>
           </div>
@@ -1546,7 +1967,7 @@ INSTRUCTIONS DE SÉCURITÉ :
               <button
                 className="primary-button"
                 type="button"
-                onClick={openAddModal}
+                onClick={() => openAddModal()}
                 title="Ajouter un identifiant (Ctrl+N)"
               >
                 <span>+</span> Nouvel accès
@@ -1654,13 +2075,33 @@ INSTRUCTIONS DE SÉCURITÉ :
                       onClick={() => setSelectedId(entry.id)}
                     >
                       <span className={`entry-icon ${entry.category.toLowerCase()}`}>
-                        {entry.title.charAt(0).toUpperCase()}
+                        {entry.itemType === 'note'
+                          ? '📝'
+                          : entry.itemType === 'file'
+                          ? '📁'
+                          : entry.title.charAt(0).toUpperCase()}
                       </span>
                       <span className="entry-copy">
                         <strong>{entry.title}</strong>
                         <small>
-                          {entry.username}
+                          {entry.itemType === 'note'
+                            ? (entry.notes ? `${entry.notes.slice(0, 28)}...` : 'Note confidentielle')
+                            : entry.itemType === 'file'
+                            ? (entry.attachments && entry.attachments.length > 0
+                                ? `${entry.attachments.length} fichier(s) scellé(s)`
+                                : 'Fichier chiffré')
+                            : (entry.username || 'Identifiant')}
                           {entry.totpSecret && <span className="entry-totp-badge"> • 🔑 2FA</span>}
+                          {entry.folder && (
+                            <span className="entry-folder-pill" title={`Dossier : ${entry.folder}`}>
+                              📁 {entry.folder.split('/').pop()}
+                            </span>
+                          )}
+                          {entry.attachments && entry.attachments.length > 0 && entry.itemType !== 'file' && (
+                            <span className="entry-att-pill" title={`${entry.attachments.length} pièce(s) jointe(s)`}>
+                              📎 {entry.attachments.length}
+                            </span>
+                          )}
                         </small>
                       </span>
                       <span
@@ -1722,7 +2163,7 @@ INSTRUCTIONS DE SÉCURITÉ :
                   Vous n'avez pas encore d'identifiant enregistré. Créez votre premier accès ou importez une sauvegarde existante.
                 </p>
                 <div className="empty-card-actions">
-                  <button className="primary-button" type="button" onClick={openAddModal}>
+                  <button className="primary-button" type="button" onClick={() => openAddModal()}>
                     <span>+</span> Ajouter un premier identifiant
                   </button>
                   <button className="secondary-btn" type="button" onClick={openGeneratorModal}>
@@ -1779,166 +2220,268 @@ INSTRUCTIONS DE SÉCURITÉ :
                   </div>
                 </div>
 
-                {/* CHAMP IDENTIFIANT */}
-                <div className="field-group">
-                  <label>Identifiant / Nom d'utilisateur</label>
-                  <div className="secret-field">
-                    <span>{selectedEntry.username}</span>
-                    <button
-                      type="button"
-                      aria-label="Copier l'identifiant"
-                      onClick={() => void copyToClipboard(selectedEntry.username, 'username', 'Identifiant')}
-                      title="Copier"
-                    >
-                      {copiedKey === 'username' ? '✓ Copié !' : '📋 Copier'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* CHAMP MOT DE PASSE AVEC ANALYSE */}
-                <div className="field-group">
-                  <label>Mot de passe</label>
-                  <div className="secret-field">
-                    <span className="password-display">
-                      {selectedEntry.password
-                        ? showPassword
-                          ? selectedEntry.password
-                          : '••••••••••••••••'
-                        : '••••••••••••'}
-                    </span>
-                    <div className="field-actions">
-                      {selectedEntry.password && (
-                        <button
-                          type="button"
-                          className="reveal-button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          title={showPassword ? 'Masquer' : 'Afficher'}
-                        >
-                          {showPassword ? '🙈' : '👁️'}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        aria-label="Copier le mot de passe"
-                        onClick={() =>
-                          void copyToClipboard(selectedEntry.password || '', 'password', 'Mot de passe')
-                        }
-                        title="Copier avec effacement auto dans 30s"
-                      >
-                        {copiedKey === 'password' ? '✓ Copié !' : '📋 Copier'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {selectedEntry.password && (
-                    <div className="strength-container">
-                      <div className="strength-bars">
-                        {[1, 2, 3, 4].map((step) => (
-                          <div
-                            key={step}
-                            className={`strength-bar-step ${
-                              step <= selectedStrength.score ? 'active' : ''
-                            }`}
-                            style={{
-                              backgroundColor:
-                                step <= selectedStrength.score ? selectedStrength.color : undefined,
-                            }}
-                          />
-                        ))}
-                      </div>
-                      <div className="strength-meta">
-                        <span style={{ color: selectedStrength.color, fontWeight: 600 }}>
-                          Force : {selectedStrength.label}
+                {/* SI C'EST UNE NOTE SÉCURISÉE */}
+                {selectedEntry.itemType === 'note' ? (
+                  <div className="note-view-card">
+                    <div className="note-view-header">
+                      <div className="note-view-meta">
+                        <span>📝 NOTE SÉCURISÉE</span>
+                        <span className="note-stats-tag">
+                          {selectedEntry.notes ? selectedEntry.notes.trim().split(/\s+/).filter(Boolean).length : 0} mots • {selectedEntry.notes?.length || 0} caractères
                         </span>
-                        <span className="entropy-tag">{selectedStrength.entropyBits} bits d'entropie</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* CHAMP AUTHENTICATOR 2FA (RFC 6238) */}
-                {selectedEntry.totpSecret ? (
-                  <div className="totp-card">
-                    <div className="totp-card-header">
-                      <label>🔑 Authenticator 2FA (RFC 6238)</label>
-                      <span
-                        className={`totp-countdown-badge ${
-                          totpCountdown <= 5 ? 'danger' : totpCountdown <= 10 ? 'warning' : 'normal'
-                        }`}
-                      >
-                        ⏱️ Expire dans {totpCountdown}s
-                      </span>
-                    </div>
-
-                    <div className="totp-code-display-row">
-                      <div className="totp-digits-large">
-                        {totpCodes[selectedEntry.id]
-                          ? `${totpCodes[selectedEntry.id].slice(0, 3)} ${totpCodes[selectedEntry.id].slice(3)}`
-                          : '------'}
                       </div>
                       <button
                         type="button"
                         className="primary-btn-sm"
-                        onClick={() =>
-                          void copyToClipboard(
-                            totpCodes[selectedEntry.id] || '',
-                            `totp-${selectedEntry.id}`,
-                            'Code 2FA Authenticator',
-                          )
-                        }
-                        title="Copier le code 2FA à 6 chiffres"
+                        onClick={() => void copyToClipboard(selectedEntry.notes || '', 'note-text', 'Note sécurisée')}
                       >
-                        {copiedKey === `totp-${selectedEntry.id}` ? '✓ Code copié !' : '📋 Copier'}
+                        {copiedKey === 'note-text' ? '✓ Note copiée !' : '📋 Copier la note'}
                       </button>
                     </div>
-
-                    <div className="totp-progress-track">
-                      <div
-                        className={`totp-progress-bar ${
-                          totpCountdown <= 5 ? 'danger' : totpCountdown <= 10 ? 'warning' : 'normal'
-                        }`}
-                        style={{ width: `${(totpCountdown / 30) * 100}%` }}
-                      />
+                    <div className="note-content-display">
+                      {selectedEntry.notes ? (
+                        <pre>{selectedEntry.notes}</pre>
+                      ) : (
+                        <span className="empty-note-txt">Cette note sécurisée est vide.</span>
+                      )}
                     </div>
                   </div>
+                ) : selectedEntry.itemType === 'file' ? (
+                  /* SI C'EST UN FICHIER PROTÉGÉ */
+                  <>
+                    {selectedEntry.notes && (
+                      <div className="field-group">
+                        <label>Description / Remarques</label>
+                        <div className="secret-field notes-field">
+                          <p>{selectedEntry.notes}</p>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 ) : (
-                  <div className="totp-empty-cta">
-                    <span>🔑 Aucun code 2FA Authenticator configuré</span>
-                    <button
-                      type="button"
-                      className="secondary-btn-xs"
-                      onClick={() => openEditModal(selectedEntry)}
-                    >
-                      + Ajouter un code 2FA
-                    </button>
-                  </div>
-                )}
-
-                {/* CHAMP URL */}
-                {selectedEntry.url && (
-                  <div className="field-group">
-                    <label>Adresse du site / URL</label>
-                    <div className="secret-field">
-                      <a href={selectedEntry.url} target="_blank" rel="noreferrer" className="site-link">
-                        {selectedEntry.url} ↗
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => void copyToClipboard(selectedEntry.url || '', 'url', 'URL')}
-                        title="Copier l'URL"
-                      >
-                        {copiedKey === 'url' ? '✓ Copié !' : '📋 Copier'}
-                      </button>
+                  /* SI C'EST UN IDENTIFIANT CLASSIQUE */
+                  <>
+                    {/* CHAMP IDENTIFIANT */}
+                    <div className="field-group">
+                      <label>Identifiant / Nom d'utilisateur</label>
+                      <div className="secret-field">
+                        <span>{selectedEntry.username || '(aucun identifiant)'}</span>
+                        {selectedEntry.username && (
+                          <button
+                            type="button"
+                            aria-label="Copier l'identifiant"
+                            onClick={() => void copyToClipboard(selectedEntry.username, 'username', 'Identifiant')}
+                            title="Copier"
+                          >
+                            {copiedKey === 'username' ? '✓ Copié !' : '📋 Copier'}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
+
+                    {/* CHAMP MOT DE PASSE AVEC ANALYSE */}
+                    <div className="field-group">
+                      <label>Mot de passe</label>
+                      <div className="secret-field">
+                        <span className="password-display">
+                          {selectedEntry.password
+                            ? showPassword
+                              ? selectedEntry.password
+                              : '••••••••••••••••'
+                            : '••••••••••••'}
+                        </span>
+                        <div className="field-actions">
+                          {selectedEntry.password && (
+                            <button
+                              type="button"
+                              className="reveal-button"
+                              onClick={() => setShowPassword(!showPassword)}
+                              title={showPassword ? 'Masquer' : 'Afficher'}
+                            >
+                              {showPassword ? '🙈' : '👁️'}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            aria-label="Copier le mot de passe"
+                            onClick={() =>
+                              void copyToClipboard(selectedEntry.password || '', 'password', 'Mot de passe')
+                            }
+                            title="Copier avec effacement auto dans 30s"
+                          >
+                            {copiedKey === 'password' ? '✓ Copié !' : '📋 Copier'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {selectedEntry.password && (
+                        <div className="strength-container">
+                          <div className="strength-bars">
+                            {[1, 2, 3, 4].map((step) => (
+                              <div
+                                key={step}
+                                className={`strength-bar-step ${
+                                  step <= selectedStrength.score ? 'active' : ''
+                                }`}
+                                style={{
+                                  backgroundColor:
+                                    step <= selectedStrength.score ? selectedStrength.color : undefined,
+                                }}
+                              />
+                            ))}
+                          </div>
+                          <div className="strength-meta">
+                            <span style={{ color: selectedStrength.color, fontWeight: 600 }}>
+                              Force : {selectedStrength.label}
+                            </span>
+                            <span className="entropy-tag">{selectedStrength.entropyBits} bits d'entropie</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* CHAMP AUTHENTICATOR 2FA (RFC 6238) */}
+                    {selectedEntry.totpSecret ? (
+                      <div className="totp-card">
+                        <div className="totp-card-header">
+                          <label>🔑 Authenticator 2FA (RFC 6238)</label>
+                          <span
+                            className={`totp-countdown-badge ${
+                              totpCountdown <= 5 ? 'danger' : totpCountdown <= 10 ? 'warning' : 'normal'
+                            }`}
+                          >
+                            ⏱️ Expire dans {totpCountdown}s
+                          </span>
+                        </div>
+
+                        <div className="totp-code-display-row">
+                          <div className="totp-digits-large">
+                            {totpCodes[selectedEntry.id]
+                              ? `${totpCodes[selectedEntry.id].slice(0, 3)} ${totpCodes[selectedEntry.id].slice(3)}`
+                              : '------'}
+                          </div>
+                          <button
+                            type="button"
+                            className="primary-btn-sm"
+                            onClick={() =>
+                              void copyToClipboard(
+                                totpCodes[selectedEntry.id] || '',
+                                `totp-${selectedEntry.id}`,
+                                'Code 2FA Authenticator',
+                              )
+                            }
+                            title="Copier le code 2FA à 6 chiffres"
+                          >
+                            {copiedKey === `totp-${selectedEntry.id}` ? '✓ Code copié !' : '📋 Copier'}
+                          </button>
+                        </div>
+
+                        <div className="totp-progress-track">
+                          <div
+                            className={`totp-progress-bar ${
+                              totpCountdown <= 5 ? 'danger' : totpCountdown <= 10 ? 'warning' : 'normal'
+                            }`}
+                            style={{ width: `${(totpCountdown / 30) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="totp-empty-cta">
+                        <span>🔑 Aucun code 2FA Authenticator configuré</span>
+                        <button
+                          type="button"
+                          className="secondary-btn-xs"
+                          onClick={() => openEditModal(selectedEntry)}
+                        >
+                          + Ajouter un code 2FA
+                        </button>
+                      </div>
+                    )}
+
+                    {/* CHAMP URL */}
+                    {selectedEntry.url && (
+                      <div className="field-group">
+                        <label>Adresse du site / URL</label>
+                        <div className="secret-field">
+                          <a href={selectedEntry.url} target="_blank" rel="noreferrer" className="site-link">
+                            {selectedEntry.url} ↗
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => void copyToClipboard(selectedEntry.url || '', 'url', 'URL')}
+                            title="Copier l'URL"
+                          >
+                            {copiedKey === 'url' ? '✓ Copié !' : '📋 Copier'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CHAMP NOTES */}
+                    {selectedEntry.notes && (
+                      <div className="field-group">
+                        <label>Notes confidentielles</label>
+                        <div className="secret-field notes-field">
+                          <p>{selectedEntry.notes}</p>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
 
-                {/* CHAMP NOTES */}
-                {selectedEntry.notes && (
-                  <div className="field-group">
-                    <label>Notes confidentielles</label>
-                    <div className="secret-field notes-field">
-                      <p>{selectedEntry.notes}</p>
+                {/* PIÈCES JOINTES ET FICHIERS SCELLÉS */}
+                {selectedEntry.attachments && selectedEntry.attachments.length > 0 && (
+                  <div className="attachments-view-section">
+                    <div className="attachments-view-header">
+                      <label>
+                        📁 {selectedEntry.itemType === 'file' ? 'Fichiers protégés' : 'Pièces jointes chiffrées'} ({selectedEntry.attachments.length})
+                      </label>
+                    </div>
+
+                    <div className="attachments-view-grid">
+                      {selectedEntry.attachments.map((att) => (
+                        <div key={att.id} className="attachment-view-card">
+                          <div className="attachment-view-top">
+                            <span className="att-large-icon">
+                              {att.mimeType.startsWith('image/')
+                                ? '🖼️'
+                                : att.mimeType.includes('pdf')
+                                ? '📄'
+                                : att.mimeType.includes('zip') || att.mimeType.includes('tar')
+                                ? '📦'
+                                : '🔒'}
+                            </span>
+                            <div className="attachment-view-info">
+                              <strong className="attachment-view-name">{att.name}</strong>
+                              <span className="attachment-view-meta">
+                                {formatFileSize(att.size)} • {att.mimeType || 'Fichier'}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              className="download-att-btn"
+                              onClick={() => downloadAttachment(att)}
+                              title="Déchiffrer et télécharger ce fichier sur votre appareil"
+                            >
+                              📥 Télécharger
+                            </button>
+                          </div>
+
+                          {att.mimeType.startsWith('image/') && (
+                            <div className="attachment-preview-box">
+                              <img
+                                src={
+                                  att.data.startsWith('data:')
+                                    ? att.data
+                                    : `data:${att.mimeType};base64,${att.data}`
+                                }
+                                alt={att.name}
+                                className="attachment-preview-img"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -1977,7 +2520,7 @@ INSTRUCTIONS DE SÉCURITÉ :
                   <button
                     type="button"
                     className="secondary-btn"
-                    onClick={openAddModal}
+                    onClick={() => openAddModal()}
                   >
                     <span>➕</span> Créer un premier accès manuellement
                   </button>
@@ -2504,74 +3047,183 @@ INSTRUCTIONS DE SÉCURITÉ :
         <div className="modal-backdrop" onClick={() => setIsAddEntryOpen(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Nouvel identifiant</h2>
+              <h2>
+                {formItemType === 'note'
+                  ? 'Nouvelle note sécurisée'
+                  : formItemType === 'file'
+                  ? 'Nouveau fichier protégé'
+                  : 'Nouvel identifiant'}
+              </h2>
               <button className="close-button" type="button" onClick={() => setIsAddEntryOpen(false)}>
                 ✕
               </button>
             </div>
+
+            {/* SÉLECTEUR DE TYPE D'ÉLÉMENT */}
+            <div className="item-type-tabs">
+              <button
+                type="button"
+                className={`item-type-tab ${formItemType === 'login' ? 'active' : ''}`}
+                onClick={() => setFormItemType('login')}
+              >
+                🔑 Identifiant
+              </button>
+              <button
+                type="button"
+                className={`item-type-tab ${formItemType === 'note' ? 'active' : ''}`}
+                onClick={() => setFormItemType('note')}
+              >
+                📝 Note sécurisée
+              </button>
+              <button
+                type="button"
+                className={`item-type-tab ${formItemType === 'file' ? 'active' : ''}`}
+                onClick={() => setFormItemType('file')}
+              >
+                📁 Fichier protégé
+              </button>
+            </div>
+
             <form onSubmit={(e) => void handleCreateEntry(e)}>
               <div className="modal-body form-grid">
                 <label>
-                  Titre du site ou service *
+                  {formItemType === 'note'
+                    ? 'Titre de la note *'
+                    : formItemType === 'file'
+                    ? 'Nom du document / Fichier *'
+                    : 'Titre du site ou service *'}
                   <input
                     type="text"
                     required
                     value={formTitle}
                     onChange={(e) => setFormTitle(e.target.value)}
-                    placeholder="ex: GitHub, Google, Banque..."
+                    placeholder={
+                      formItemType === 'note'
+                        ? 'ex: Code coffre-fort, Clés SSH, Confidentialité...'
+                        : formItemType === 'file'
+                        ? 'ex: Scan Passeport, Certificat SSL, Backup...'
+                        : 'ex: GitHub, Google, Banque...'
+                    }
                     autoFocus
                   />
                 </label>
 
+                {/* DOSSIER & SOUS-DOSSIER */}
                 <label>
-                  Identifiant / Email / Pseudo
-                  <input
-                    type="text"
-                    value={formUsername}
-                    onChange={(e) => setFormUsername(e.target.value)}
-                    placeholder="ex: alexandre@exemple.fr"
-                  />
-                </label>
-
-                <label>
-                  Mot de passe
-                  <div className="password-input-row">
-                    <input
-                      type="text"
-                      value={formPassword}
-                      onChange={(e) => setFormPassword(e.target.value)}
-                      placeholder="Mot de passe"
-                    />
-                    <button
-                      type="button"
-                      className="secondary-btn"
-                      onClick={() => setFormPassword(generatePasswordWithOptions(genConfig))}
-                      title="Générer un mot de passe fort"
-                    >
-                      🎲 Générer
-                    </button>
-                  </div>
-                </label>
-
-                {formPassword && (
-                  <div className="strength-container form-strength">
-                    <div className="strength-bars">
-                      {[1, 2, 3, 4].map((step) => (
-                        <div
-                          key={step}
-                          className={`strength-bar-step ${step <= formStrength.score ? 'active' : ''}`}
-                          style={{
-                            backgroundColor: step <= formStrength.score ? formStrength.color : undefined,
+                  Dossier & sous-dossier
+                  <div className="folder-picker-group">
+                    {!isCreatingNewFolderInForm ? (
+                      <div className="folder-select-row">
+                        <select
+                          value={formFolder}
+                          onChange={(e) => {
+                            if (e.target.value === '__NEW__') {
+                              setIsCreatingNewFolderInForm(true)
+                              setFormNewFolderInput('')
+                            } else {
+                              setFormFolder(e.target.value)
+                            }
                           }}
+                        >
+                          <option value="">📁 Racine (aucun dossier)</option>
+                          {allKnownFolders.map((f) => (
+                            <option key={f} value={f}>
+                              📁 {f}
+                            </option>
+                          ))}
+                          <option value="__NEW__">➕ Créer un nouveau dossier / sous-dossier...</option>
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="new-folder-inline-input">
+                        <input
+                          type="text"
+                          placeholder="ex: Personnel/Banque ou Travail/Clients/Acme"
+                          value={formNewFolderInput}
+                          onChange={(e) => setFormNewFolderInput(e.target.value)}
+                          autoFocus
                         />
-                      ))}
-                    </div>
-                    <div className="strength-meta">
-                      <span style={{ color: formStrength.color, fontWeight: 600 }}>
-                        {formStrength.label} ({formStrength.entropyBits} bits)
-                      </span>
-                    </div>
+                        <button
+                          type="button"
+                          className="secondary-btn-sm"
+                          onClick={() => {
+                            const clean = formNewFolderInput.trim().replace(/^\/+|\/+$/g, '')
+                            if (clean) {
+                              setFormFolder(clean)
+                              if (!customFolders.includes(clean)) {
+                                void handleCreateFolder(clean)
+                              }
+                            }
+                            setIsCreatingNewFolderInForm(false)
+                          }}
+                        >
+                          Valider
+                        </button>
+                        <button
+                          type="button"
+                          className="close-sm-btn"
+                          onClick={() => setIsCreatingNewFolderInForm(false)}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
                   </div>
+                </label>
+
+                {formItemType === 'login' && (
+                  <>
+                    <label>
+                      Identifiant / Email / Pseudo
+                      <input
+                        type="text"
+                        value={formUsername}
+                        onChange={(e) => setFormUsername(e.target.value)}
+                        placeholder="ex: alexandre@exemple.fr"
+                      />
+                    </label>
+
+                    <label>
+                      Mot de passe
+                      <div className="password-input-row">
+                        <input
+                          type="text"
+                          value={formPassword}
+                          onChange={(e) => setFormPassword(e.target.value)}
+                          placeholder="Mot de passe"
+                        />
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => setFormPassword(generatePasswordWithOptions(genConfig))}
+                          title="Générer un mot de passe fort"
+                        >
+                          🎲 Générer
+                        </button>
+                      </div>
+                    </label>
+
+                    {formPassword && (
+                      <div className="strength-container form-strength">
+                        <div className="strength-bars">
+                          {[1, 2, 3, 4].map((step) => (
+                            <div
+                              key={step}
+                              className={`strength-bar-step ${step <= formStrength.score ? 'active' : ''}`}
+                              style={{
+                                backgroundColor: step <= formStrength.score ? formStrength.color : undefined,
+                              }}
+                            />
+                          ))}
+                        </div>
+                        <div className="strength-meta">
+                          <span style={{ color: formStrength.color, fontWeight: 600 }}>
+                            {formStrength.label} ({formStrength.entropyBits} bits)
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 <label>
@@ -2586,49 +3238,123 @@ INSTRUCTIONS DE SÉCURITÉ :
                   </select>
                 </label>
 
-                <label>
-                  Clé Secrète TOTP / 2FA Authenticator (optionnel)
-                  <input
-                    type="text"
-                    value={formTotpSecret}
-                    onChange={(e) => {
-                      const val = e.target.value
-                      setFormTotpSecret(val)
-                      if (val.trim().toLowerCase().startsWith('otpauth://')) {
-                        const parsed = parseOtpAuthUri(val)
-                        if (parsed) {
-                          if (parsed.secret) setFormTotpSecret(parsed.secret)
-                          if (!formTitle && parsed.issuer) setFormTitle(parsed.issuer)
-                          if (!formUsername && parsed.account) setFormUsername(parsed.account)
-                        }
-                      }
-                    }}
-                    placeholder="ex: JBSWY3DPEHPK3PXP ou collez une URL otpauth://..."
-                  />
-                  <small className="field-hint">
-                    Génère des codes temporaires à 6 chiffres (Google Authenticator, Bitwarden, Aegis).
-                  </small>
-                </label>
+                {formItemType === 'login' && (
+                  <>
+                    <label>
+                      Clé Secrète TOTP / 2FA Authenticator (optionnel)
+                      <input
+                        type="text"
+                        value={formTotpSecret}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setFormTotpSecret(val)
+                          if (val.trim().toLowerCase().startsWith('otpauth://')) {
+                            const parsed = parseOtpAuthUri(val)
+                            if (parsed) {
+                              if (parsed.secret) setFormTotpSecret(parsed.secret)
+                              if (!formTitle && parsed.issuer) setFormTitle(parsed.issuer)
+                              if (!formUsername && parsed.account) setFormUsername(parsed.account)
+                            }
+                          }
+                        }}
+                        placeholder="ex: JBSWY3DPEHPK3PXP ou collez une URL otpauth://..."
+                      />
+                      <small className="field-hint">
+                        Génère des codes temporaires à 6 chiffres (Google Authenticator, Bitwarden, Aegis).
+                      </small>
+                    </label>
 
-                <label>
-                  Adresse URL (optionnel)
-                  <input
-                    type="url"
-                    value={formUrl}
-                    onChange={(e) => setFormUrl(e.target.value)}
-                    placeholder="https://..."
-                  />
-                </label>
+                    <label>
+                      Adresse URL (optionnel)
+                      <input
+                        type="url"
+                        value={formUrl}
+                        onChange={(e) => setFormUrl(e.target.value)}
+                        placeholder="https://..."
+                      />
+                    </label>
+                  </>
+                )}
 
+                {/* ZONE DE TEXTE POUR LA NOTE OU DESCRIPTION */}
                 <label>
-                  Notes complémentaires (optionnel)
+                  {formItemType === 'note'
+                    ? 'Contenu de la note confidentielle'
+                    : 'Notes complémentaires (optionnel)'}
                   <textarea
-                    rows={3}
+                    rows={formItemType === 'note' ? 8 : 3}
                     value={formNotes}
                     onChange={(e) => setFormNotes(e.target.value)}
-                    placeholder="Notes sécurisées..."
+                    placeholder={
+                      formItemType === 'note'
+                        ? 'Saisissez vos notes confidentielles, codes de secours, listes secrètes...'
+                        : 'Notes sécurisées...'
+                    }
                   />
+                  {formItemType === 'note' && (
+                    <small className="field-hint">
+                      {formNotes.trim().split(/\s+/).filter(Boolean).length} mot(s) • {formNotes.length} caractère(s)
+                    </small>
+                  )}
                 </label>
+
+                {/* SECTION PIÈCES JOINTES & FICHIERS PROTÉGÉS */}
+                <div className="form-attachments-section">
+                  <div className="attachments-header">
+                    <label>
+                      {formItemType === 'file' ? 'Fichiers à chiffrer *' : 'Pièces jointes chiffrées'} ({formAttachments.length})
+                    </label>
+                    <label className="file-upload-btn-label">
+                      <span>📎 Parcourir...</span>
+                      <input
+                        type="file"
+                        multiple
+                        style={{ display: 'none' }}
+                        onChange={(e) => void handleFileUpload(e.target.files)}
+                      />
+                    </label>
+                  </div>
+
+                  {formAttachments.length > 0 ? (
+                    <div className="form-attachments-list">
+                      {formAttachments.map((att) => (
+                        <div key={att.id} className="form-attachment-item">
+                          <span className="form-att-icon">
+                            {att.mimeType.startsWith('image/')
+                              ? '🖼️'
+                              : att.mimeType.includes('pdf')
+                              ? '📄'
+                              : '📦'}
+                          </span>
+                          <div className="form-att-info">
+                            <span className="form-att-name">{att.name}</span>
+                            <span className="form-att-size">{formatFileSize(att.size)}</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="att-delete-btn"
+                            onClick={() => setFormAttachments((prev) => prev.filter((a) => a.id !== att.id))}
+                            title="Supprimer ce fichier"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      className="attachments-dropzone"
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        void handleFileUpload(e.dataTransfer.files)
+                      }}
+                    >
+                      <span>📂 Glissez-déposez des fichiers ici (PDF, photos, clés, documents...)</span>
+                      <small>Chiffrés automatiquement en Argon2id + AES-256-GCM dans votre coffre</small>
+                    </div>
+                  )}
+                </div>
 
                 <label className="checkbox-row">
                   <input
@@ -2645,7 +3371,11 @@ INSTRUCTIONS DE SÉCURITÉ :
                   Annuler
                 </button>
                 <button type="submit" className="primary-button">
-                  Enregistrer l'accès
+                  {formItemType === 'note'
+                    ? 'Enregistrer la note'
+                    : formItemType === 'file'
+                    ? 'Enregistrer le fichier protégé'
+                    : "Enregistrer l'accès"}
                 </button>
               </div>
             </form>
@@ -2658,15 +3388,51 @@ INSTRUCTIONS DE SÉCURITÉ :
         <div className="modal-backdrop" onClick={() => setIsEditEntryOpen(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Modifier l'identifiant</h2>
+              <h2>
+                {formItemType === 'note'
+                  ? 'Modifier la note sécurisée'
+                  : formItemType === 'file'
+                  ? 'Modifier le fichier protégé'
+                  : "Modifier l'identifiant"}
+              </h2>
               <button className="close-button" type="button" onClick={() => setIsEditEntryOpen(false)}>
                 ✕
               </button>
             </div>
+
+            {/* SÉLECTEUR DE TYPE D'ÉLÉMENT */}
+            <div className="item-type-tabs">
+              <button
+                type="button"
+                className={`item-type-tab ${formItemType === 'login' ? 'active' : ''}`}
+                onClick={() => setFormItemType('login')}
+              >
+                🔑 Identifiant
+              </button>
+              <button
+                type="button"
+                className={`item-type-tab ${formItemType === 'note' ? 'active' : ''}`}
+                onClick={() => setFormItemType('note')}
+              >
+                📝 Note sécurisée
+              </button>
+              <button
+                type="button"
+                className={`item-type-tab ${formItemType === 'file' ? 'active' : ''}`}
+                onClick={() => setFormItemType('file')}
+              >
+                📁 Fichier protégé
+              </button>
+            </div>
+
             <form onSubmit={(e) => void handleUpdateEntry(e)}>
               <div className="modal-body form-grid">
                 <label>
-                  Titre du site ou service *
+                  {formItemType === 'note'
+                    ? 'Titre de la note *'
+                    : formItemType === 'file'
+                    ? 'Nom du document / Fichier *'
+                    : 'Titre du site ou service *'}
                   <input
                     type="text"
                     required
@@ -2675,53 +3441,120 @@ INSTRUCTIONS DE SÉCURITÉ :
                   />
                 </label>
 
+                {/* DOSSIER & SOUS-DOSSIER */}
                 <label>
-                  Identifiant / Email / Pseudo
-                  <input
-                    type="text"
-                    value={formUsername}
-                    onChange={(e) => setFormUsername(e.target.value)}
-                  />
-                </label>
-
-                <label>
-                  Mot de passe
-                  <div className="password-input-row">
-                    <input
-                      type="text"
-                      value={formPassword}
-                      onChange={(e) => setFormPassword(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="secondary-btn"
-                      onClick={() => setFormPassword(generatePasswordWithOptions(genConfig))}
-                      title="Générer un mot de passe fort"
-                    >
-                      🎲 Générer
-                    </button>
-                  </div>
-                </label>
-
-                {formPassword && (
-                  <div className="strength-container form-strength">
-                    <div className="strength-bars">
-                      {[1, 2, 3, 4].map((step) => (
-                        <div
-                          key={step}
-                          className={`strength-bar-step ${step <= formStrength.score ? 'active' : ''}`}
-                          style={{
-                            backgroundColor: step <= formStrength.score ? formStrength.color : undefined,
+                  Dossier & sous-dossier
+                  <div className="folder-picker-group">
+                    {!isCreatingNewFolderInForm ? (
+                      <div className="folder-select-row">
+                        <select
+                          value={formFolder}
+                          onChange={(e) => {
+                            if (e.target.value === '__NEW__') {
+                              setIsCreatingNewFolderInForm(true)
+                              setFormNewFolderInput('')
+                            } else {
+                              setFormFolder(e.target.value)
+                            }
                           }}
+                        >
+                          <option value="">📁 Racine (aucun dossier)</option>
+                          {allKnownFolders.map((f) => (
+                            <option key={f} value={f}>
+                              📁 {f}
+                            </option>
+                          ))}
+                          <option value="__NEW__">➕ Créer un nouveau dossier / sous-dossier...</option>
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="new-folder-inline-input">
+                        <input
+                          type="text"
+                          placeholder="ex: Personnel/Banque ou Travail/Clients/Acme"
+                          value={formNewFolderInput}
+                          onChange={(e) => setFormNewFolderInput(e.target.value)}
+                          autoFocus
                         />
-                      ))}
-                    </div>
-                    <div className="strength-meta">
-                      <span style={{ color: formStrength.color, fontWeight: 600 }}>
-                        {formStrength.label} ({formStrength.entropyBits} bits)
-                      </span>
-                    </div>
+                        <button
+                          type="button"
+                          className="secondary-btn-sm"
+                          onClick={() => {
+                            const clean = formNewFolderInput.trim().replace(/^\/+|\/+$/g, '')
+                            if (clean) {
+                              setFormFolder(clean)
+                              if (!customFolders.includes(clean)) {
+                                void handleCreateFolder(clean)
+                              }
+                            }
+                            setIsCreatingNewFolderInForm(false)
+                          }}
+                        >
+                          Valider
+                        </button>
+                        <button
+                          type="button"
+                          className="close-sm-btn"
+                          onClick={() => setIsCreatingNewFolderInForm(false)}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
                   </div>
+                </label>
+
+                {formItemType === 'login' && (
+                  <>
+                    <label>
+                      Identifiant / Email / Pseudo
+                      <input
+                        type="text"
+                        value={formUsername}
+                        onChange={(e) => setFormUsername(e.target.value)}
+                      />
+                    </label>
+
+                    <label>
+                      Mot de passe
+                      <div className="password-input-row">
+                        <input
+                          type="text"
+                          value={formPassword}
+                          onChange={(e) => setFormPassword(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => setFormPassword(generatePasswordWithOptions(genConfig))}
+                          title="Générer un mot de passe fort"
+                        >
+                          🎲 Générer
+                        </button>
+                      </div>
+                    </label>
+
+                    {formPassword && (
+                      <div className="strength-container form-strength">
+                        <div className="strength-bars">
+                          {[1, 2, 3, 4].map((step) => (
+                            <div
+                              key={step}
+                              className={`strength-bar-step ${step <= formStrength.score ? 'active' : ''}`}
+                              style={{
+                                backgroundColor: step <= formStrength.score ? formStrength.color : undefined,
+                              }}
+                            />
+                          ))}
+                        </div>
+                        <div className="strength-meta">
+                          <span style={{ color: formStrength.color, fontWeight: 600 }}>
+                            {formStrength.label} ({formStrength.entropyBits} bits)
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 <label>
@@ -2736,47 +3569,117 @@ INSTRUCTIONS DE SÉCURITÉ :
                   </select>
                 </label>
 
-                <label>
-                  Clé Secrète TOTP / 2FA Authenticator (optionnel)
-                  <input
-                    type="text"
-                    value={formTotpSecret}
-                    onChange={(e) => {
-                      const val = e.target.value
-                      setFormTotpSecret(val)
-                      if (val.trim().toLowerCase().startsWith('otpauth://')) {
-                        const parsed = parseOtpAuthUri(val)
-                        if (parsed) {
-                          if (parsed.secret) setFormTotpSecret(parsed.secret)
-                          if (!formTitle && parsed.issuer) setFormTitle(parsed.issuer)
-                          if (!formUsername && parsed.account) setFormUsername(parsed.account)
-                        }
-                      }
-                    }}
-                    placeholder="ex: JBSWY3DPEHPK3PXP ou collez une URL otpauth://..."
-                  />
-                  <small className="field-hint">
-                    Génère des codes temporaires à 6 chiffres (Google Authenticator, Bitwarden, Aegis).
-                  </small>
-                </label>
+                {formItemType === 'login' && (
+                  <>
+                    <label>
+                      Clé Secrète TOTP / 2FA Authenticator (optionnel)
+                      <input
+                        type="text"
+                        value={formTotpSecret}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setFormTotpSecret(val)
+                          if (val.trim().toLowerCase().startsWith('otpauth://')) {
+                            const parsed = parseOtpAuthUri(val)
+                            if (parsed) {
+                              if (parsed.secret) setFormTotpSecret(parsed.secret)
+                              if (!formTitle && parsed.issuer) setFormTitle(parsed.issuer)
+                              if (!formUsername && parsed.account) setFormUsername(parsed.account)
+                            }
+                          }
+                        }}
+                        placeholder="ex: JBSWY3DPEHPK3PXP ou collez une URL otpauth://..."
+                      />
+                      <small className="field-hint">
+                        Génère des codes temporaires à 6 chiffres (Google Authenticator, Bitwarden, Aegis).
+                      </small>
+                    </label>
 
-                <label>
-                  Adresse URL
-                  <input
-                    type="url"
-                    value={formUrl}
-                    onChange={(e) => setFormUrl(e.target.value)}
-                  />
-                </label>
+                    <label>
+                      Adresse URL
+                      <input
+                        type="url"
+                        value={formUrl}
+                        onChange={(e) => setFormUrl(e.target.value)}
+                      />
+                    </label>
+                  </>
+                )}
 
+                {/* ZONE DE TEXTE POUR LA NOTE OU DESCRIPTION */}
                 <label>
-                  Notes complémentaires
+                  {formItemType === 'note'
+                    ? 'Contenu de la note confidentielle'
+                    : 'Notes complémentaires'}
                   <textarea
-                    rows={3}
+                    rows={formItemType === 'note' ? 8 : 3}
                     value={formNotes}
                     onChange={(e) => setFormNotes(e.target.value)}
                   />
+                  {formItemType === 'note' && (
+                    <small className="field-hint">
+                      {formNotes.trim().split(/\s+/).filter(Boolean).length} mot(s) • {formNotes.length} caractère(s)
+                    </small>
+                  )}
                 </label>
+
+                {/* SECTION PIÈCES JOINTES & FICHIERS PROTÉGÉS */}
+                <div className="form-attachments-section">
+                  <div className="attachments-header">
+                    <label>
+                      {formItemType === 'file' ? 'Fichiers chiffrés *' : 'Pièces jointes chiffrées'} ({formAttachments.length})
+                    </label>
+                    <label className="file-upload-btn-label">
+                      <span>📎 Parcourir...</span>
+                      <input
+                        type="file"
+                        multiple
+                        style={{ display: 'none' }}
+                        onChange={(e) => void handleFileUpload(e.target.files)}
+                      />
+                    </label>
+                  </div>
+
+                  {formAttachments.length > 0 ? (
+                    <div className="form-attachments-list">
+                      {formAttachments.map((att) => (
+                        <div key={att.id} className="form-attachment-item">
+                          <span className="form-att-icon">
+                            {att.mimeType.startsWith('image/')
+                              ? '🖼️'
+                              : att.mimeType.includes('pdf')
+                              ? '📄'
+                              : '📦'}
+                          </span>
+                          <div className="form-att-info">
+                            <span className="form-att-name">{att.name}</span>
+                            <span className="form-att-size">{formatFileSize(att.size)}</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="att-delete-btn"
+                            onClick={() => setFormAttachments((prev) => prev.filter((a) => a.id !== att.id))}
+                            title="Supprimer ce fichier"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      className="attachments-dropzone"
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        void handleFileUpload(e.dataTransfer.files)
+                      }}
+                    >
+                      <span>📂 Glissez-déposez des fichiers ici (PDF, photos, clés, documents...)</span>
+                      <small>Chiffrés automatiquement en Argon2id + AES-256-GCM dans votre coffre</small>
+                    </div>
+                  )}
+                </div>
 
                 <label className="checkbox-row">
                   <input
@@ -2794,6 +3697,61 @@ INSTRUCTIONS DE SÉCURITÉ :
                 </button>
                 <button type="submit" className="primary-button">
                   Enregistrer les modifications
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODALE DE GESTION DOSSIER / SOUS-DOSSIER */}
+      {folderModalMode && (
+        <div className="modal-backdrop" onClick={() => setFolderModalMode(null)}>
+          <div className="modal-card small-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>
+                {folderModalMode === 'create'
+                  ? folderTargetName
+                    ? 'Nouveau sous-dossier'
+                    : 'Nouveau dossier'
+                  : 'Renommer le dossier'}
+              </h2>
+              <button className="close-button" type="button" onClick={() => setFolderModalMode(null)}>
+                ✕
+              </button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (folderModalMode === 'create') {
+                  void handleCreateFolder(newFolderNameInput)
+                } else if (folderModalMode === 'rename') {
+                  void handleRenameFolder(folderTargetName, newFolderNameInput)
+                }
+              }}
+            >
+              <div className="modal-body form-grid">
+                <label>
+                  Chemin du dossier / sous-dossier
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    value={newFolderNameInput}
+                    onChange={(e) => setNewFolderNameInput(e.target.value)}
+                    placeholder="ex: Personnel/Banque ou Travail/Clients/Acme"
+                  />
+                  <small className="field-hint">
+                    Utilisez des barres obliques (/) pour créer des sous-dossiers imbriqués à l'infini (ex: Travail/Projets/2026).
+                  </small>
+                </label>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="lock-button" onClick={() => setFolderModalMode(null)}>
+                  Annuler
+                </button>
+                <button type="submit" className="primary-button">
+                  {folderModalMode === 'create' ? 'Créer le dossier' : 'Renommer'}
                 </button>
               </div>
             </form>

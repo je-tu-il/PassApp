@@ -54,7 +54,14 @@ public struct ContentView: View {
         (AccentTheme(rawValue: accentTheme) ?? .emerald).color
     }
 
-    private let categories = ["Tous", "Favoris", "Personnel", "Travail", "Finance"]
+    @State private var selectedFolder: String? = nil
+
+    private let categories = ["Tous", "Favoris", "Notes", "Fichiers", "Personnel", "Travail", "Finance"]
+
+    private var allFolders: [String] {
+        let set = Set(entries.compactMap { $0.folder?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+        return Array(set).sorted()
+    }
 
     private var filteredEntries: [VaultEntry] {
         if isLocked { return [] }
@@ -64,16 +71,28 @@ public struct ContentView: View {
                 matchesCategory = true
             } else if selectedCategory == "Favoris" {
                 matchesCategory = entry.favorite
+            } else if selectedCategory == "Notes" {
+                matchesCategory = entry.itemType == "note"
+            } else if selectedCategory == "Fichiers" {
+                matchesCategory = entry.itemType == "file" || !entry.attachments.isEmpty
             } else {
                 matchesCategory = entry.category == selectedCategory
+            }
+
+            let matchesFolder: Bool
+            if let folder = selectedFolder {
+                matchesFolder = entry.folder == folder || (entry.folder?.hasPrefix(folder + "/") ?? false)
+            } else {
+                matchesFolder = true
             }
 
             let matchesSearch = searchText.isEmpty ||
                 entry.title.localizedCaseInsensitiveContains(searchText) ||
                 entry.username.localizedCaseInsensitiveContains(searchText) ||
+                (entry.folder?.localizedCaseInsensitiveContains(searchText) ?? false) ||
                 (entry.notes?.localizedCaseInsensitiveContains(searchText) ?? false)
 
-            return matchesCategory && matchesSearch
+            return matchesCategory && matchesFolder && matchesSearch
         }
     }
 
@@ -288,6 +307,53 @@ public struct ContentView: View {
                 .padding(.vertical, 10)
             }
 
+            // SÉLECTEUR DE DOSSIERS (si des dossiers existent)
+            if !allFolders.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        Button {
+                            withAnimation { selectedFolder = nil }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "folder")
+                                Text("Tous")
+                            }
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(selectedFolder == nil ? themeColor.opacity(0.15) : Color(UIColor.secondarySystemGroupedBackground))
+                            .foregroundColor(selectedFolder == nil ? themeColor : .secondary)
+                            .cornerRadius(12)
+                        }
+
+                        ForEach(allFolders, id: \.self) { fld in
+                            Button {
+                                withAnimation {
+                                    if selectedFolder == fld {
+                                        selectedFolder = nil
+                                    } else {
+                                        selectedFolder = fld
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "folder.fill")
+                                    Text(fld)
+                                }
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(selectedFolder == fld ? themeColor : Color(UIColor.secondarySystemGroupedBackground))
+                                .foregroundColor(selectedFolder == fld ? .white : .primary)
+                                .cornerRadius(12)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 6)
+                }
+            }
+
             // CONTENU : LISTE OU ÉCRAN D'ACCUEIL VIERGE
             if entries.isEmpty {
                 emptyVaultView
@@ -370,17 +436,35 @@ public struct ContentView: View {
         .padding()
     }
 
-    // LIGNE D'IDENTIFIANT
+    // LIGNE D'IDENTIFIANT / NOTE / FICHIER
     private func entryRow(_ entry: VaultEntry) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
-                categoryIcon(entry.category)
+                categoryIcon(entry.category, itemType: entry.itemType ?? "login")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.title)
-                        .font(.headline)
-                    Text(entry.username)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    HStack(spacing: 6) {
+                        Text(entry.title)
+                            .font(.headline)
+                        if let folder = entry.folder, !folder.isEmpty {
+                            Text("📁 " + folder)
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.12))
+                                .foregroundColor(.secondary)
+                                .cornerRadius(4)
+                        }
+                    }
+                    if entry.itemType == "note" {
+                        Text(entry.notes?.prefix(80).appending((entry.notes?.count ?? 0) > 80 ? "..." : "") ?? "Note sécurisée")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    } else {
+                        Text(entry.username.isEmpty ? "Sans identifiant" : entry.username)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 Spacer()
                 if entry.favorite {
@@ -390,7 +474,54 @@ public struct ContentView: View {
                 }
             }
 
-            if let password = entry.password {
+            // Note sécurisée : texte complet & bouton copie
+            if entry.itemType == "note", let noteContent = entry.notes, !noteContent.isEmpty {
+                HStack {
+                    Text(noteContent)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(4)
+                    Spacer()
+                    Button {
+                        UIPasteboard.general.string = noteContent
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        copiedId = entry.id
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            if copiedId == entry.id { copiedId = nil }
+                        }
+                    } label: {
+                        Image(systemName: copiedId == entry.id ? "checkmark.circle.fill" : "doc.on.doc")
+                            .foregroundColor(copiedId == entry.id ? .green : themeColor)
+                    }
+                    .buttonStyle(BorderlessButtonStyle())
+                }
+                .padding(10)
+                .background(Color(UIColor.tertiarySystemGroupedBackground))
+                .cornerRadius(10)
+            }
+
+            // Pièces jointes si présentes
+            if !entry.attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(entry.attachments) { att in
+                            HStack(spacing: 4) {
+                                Image(systemName: "paperclip")
+                                Text(att.name)
+                                    .lineLimit(1)
+                            }
+                            .font(.caption2)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(themeColor.opacity(0.1))
+                            .foregroundColor(themeColor)
+                            .cornerRadius(6)
+                        }
+                    }
+                }
+            }
+
+            if entry.itemType != "note", let password = entry.password {
                 HStack {
                     Text(revealedPasswords.contains(entry.id) ? password : "••••••••••••••••")
                         .font(.system(.footnote, design: .monospaced))
@@ -431,7 +562,22 @@ public struct ContentView: View {
         .padding(.vertical, 4)
     }
 
-    private func categoryIcon(_ category: String) -> some View {
+    private func categoryIcon(_ category: String, itemType: String = "login") -> some View {
+        if itemType == "note" {
+            return Image(systemName: "note.text")
+                .font(.title2)
+                .foregroundColor(.purple)
+                .frame(width: 38, height: 38)
+                .background(Color.purple.opacity(0.12))
+                .cornerRadius(10)
+        } else if itemType == "file" {
+            return Image(systemName: "doc.fill")
+                .font(.title2)
+                .foregroundColor(.teal)
+                .frame(width: 38, height: 38)
+                .background(Color.teal.opacity(0.12))
+                .cornerRadius(10)
+        }
         let (icon, color): (String, Color) = {
             switch category {
             case "Finance": return ("dollarsign.circle.fill", .orange)
@@ -831,6 +977,8 @@ struct AddEntryView: View {
     var themeColor: Color
     var onSave: (VaultEntry) -> Void
 
+    @State private var itemType = "login"
+    @State private var folder = ""
     @State private var title = ""
     @State private var username = ""
     @State private var password = ""
@@ -842,19 +990,43 @@ struct AddEntryView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Informations")) {
-                    TextField("Titre (ex: GitHub, Banque...)", text: $title)
-                    TextField("Identifiant ou Email", text: $username)
+                Section(header: Text("Type d'élément")) {
+                    Picker("Type", selection: $itemType) {
+                        Text("🔑 Identifiant").tag("login")
+                        Text("📝 Note").tag("note")
+                        Text("📁 Fichier").tag("file")
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
                 }
 
-                Section(header: Text("Mot de passe")) {
-                    HStack {
-                        TextField("Mot de passe", text: $password)
-                        Button("🎲 Générer") {
-                            password = generateStrongPassword()
+                Section(header: Text("Dossier / Organisation (ex: Personnel/Banque)")) {
+                    TextField("Dossier (optionnel)", text: $folder)
+                }
+
+                Section(header: Text(itemType == "note" ? "Titre de la note" : "Informations")) {
+                    TextField(itemType == "note" ? "Titre de la note" : "Titre (ex: GitHub, Banque...)", text: $title)
+                    if itemType == "login" {
+                        TextField("Identifiant ou Email", text: $username)
+                    }
+                }
+
+                if itemType == "login" {
+                    Section(header: Text("Mot de passe")) {
+                        HStack {
+                            TextField("Mot de passe", text: $password)
+                            Button("🎲 Générer") {
+                                password = generateStrongPassword()
+                            }
+                            .font(.caption.bold())
+                            .foregroundColor(themeColor)
                         }
-                        .font(.caption.bold())
-                        .foregroundColor(themeColor)
+                    }
+                }
+
+                if itemType == "note" {
+                    Section(header: Text("Contenu chiffré de la note")) {
+                        TextEditor(text: $notes)
+                            .frame(height: 140)
                     }
                 }
 
@@ -867,16 +1039,19 @@ struct AddEntryView: View {
                     Toggle("Ajouter aux favoris", isOn: $favorite)
                 }
 
-                Section(header: Text("Détails (Optionnel)")) {
-                    TextField("https://...", text: $url)
-                    TextEditor(text: $notes)
-                        .frame(height: 70)
+                if itemType != "note" {
+                    Section(header: Text("Détails (Optionnel)")) {
+                        TextField("https://...", text: $url)
+                        TextEditor(text: $notes)
+                            .frame(height: 70)
+                    }
                 }
             }
-            .navigationTitle("Nouvel accès")
+            .navigationTitle(itemType == "note" ? "Nouvelle note" : (itemType == "file" ? "Nouveau fichier" : "Nouvel accès"))
             .navigationBarItems(
                 leading: Button("Annuler") { dismiss() },
                 trailing: Button("Enregistrer") {
+                    let trimmedFolder = folder.trimmingCharacters(in: .whitespaces)
                     let entry = VaultEntry(
                         title: title,
                         username: username,
@@ -884,7 +1059,9 @@ struct AddEntryView: View {
                         url: url.isEmpty ? nil : url,
                         notes: notes.isEmpty ? nil : notes,
                         category: category,
-                        favorite: favorite
+                        favorite: favorite,
+                        folder: trimmedFolder.isEmpty ? nil : trimmedFolder,
+                        itemType: itemType
                     )
                     onSave(entry)
                     dismiss()

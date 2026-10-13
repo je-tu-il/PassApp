@@ -1,5 +1,5 @@
 use passapp_crypto_core::{decrypt, encrypt, EncryptedPayload};
-use passapp_sync_core::{VaultDocument, VaultEntry};
+use passapp_sync_core::{VaultAttachment, VaultDocument, VaultEntry};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -28,6 +28,7 @@ struct AppStatus {
 #[derive(Deserialize)]
 struct NewEntry {
     title: String,
+    #[serde(default)]
     username: String,
     #[serde(default)]
     password: Option<String>,
@@ -35,16 +36,23 @@ struct NewEntry {
     url: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "totpSecret")]
     pub totp_secret: Option<String>,
     category: String,
     favorite: bool,
+    #[serde(default)]
+    pub folder: Option<String>,
+    #[serde(default, alias = "itemType")]
+    pub item_type: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<VaultAttachment>,
 }
 
 #[derive(Deserialize)]
 struct UpdateEntry {
     id: String,
     title: String,
+    #[serde(default)]
     username: String,
     #[serde(default)]
     password: Option<String>,
@@ -52,16 +60,23 @@ struct UpdateEntry {
     url: Option<String>,
     #[serde(default)]
     notes: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "totpSecret")]
     pub totp_secret: Option<String>,
     category: String,
     favorite: bool,
+    #[serde(default)]
+    pub folder: Option<String>,
+    #[serde(default, alias = "itemType")]
+    pub item_type: Option<String>,
+    #[serde(default)]
+    pub attachments: Option<Vec<VaultAttachment>>,
 }
 
 #[derive(Serialize)]
 struct OpenVaultResult {
     vault_locked: bool,
     entries: Vec<VaultEntry>,
+    custom_folders: Vec<String>,
     vault_path: Option<String>,
 }
 
@@ -207,6 +222,7 @@ fn create_initial_vault(
     Ok(OpenVaultResult {
         vault_locked: false,
         entries: document.entries,
+        custom_folders: document.custom_folders,
         vault_path: Some(path.to_string_lossy().to_string()),
     })
 }
@@ -254,6 +270,7 @@ fn open_vault(
     Ok(OpenVaultResult {
         vault_locked: false,
         entries: document.entries,
+        custom_folders: document.custom_folders,
         vault_path: Some(path.to_string_lossy().to_string()),
     })
 }
@@ -288,6 +305,9 @@ fn create_vault_entry(
         category: entry.category,
         favorite: entry.favorite,
         updated_at,
+        folder: entry.folder,
+        item_type: entry.item_type,
+        attachments: entry.attachments,
     };
     let mut document = state
         .document
@@ -330,6 +350,11 @@ fn update_vault_entry(
     target.totp_secret = entry.totp_secret;
     target.category = entry.category;
     target.favorite = entry.favorite;
+    target.folder = entry.folder;
+    target.item_type = entry.item_type;
+    if let Some(atts) = entry.attachments {
+        target.attachments = atts;
+    }
     target.updated_at = updated_at;
     let updated_entry = target.clone();
 
@@ -357,6 +382,145 @@ fn delete_vault_entry(state: tauri::State<'_, AppState>, id: String) -> Result<(
     document.updated_at = updated_at;
     persist_document(&state, document)?;
     Ok(())
+}
+
+#[tauri::command]
+fn get_custom_folders(state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
+    let document = state
+        .document
+        .lock()
+        .map_err(|_| "Coffre indisponible".to_owned())?;
+    Ok(document
+        .as_ref()
+        .ok_or_else(|| "Coffre verrouille".to_owned())?
+        .custom_folders
+        .clone())
+}
+
+#[tauri::command]
+fn create_custom_folder(
+    state: tauri::State<'_, AppState>,
+    folder_path: String,
+) -> Result<Vec<String>, String> {
+    let folder_path = folder_path.trim().replace('\\', "/");
+    let trimmed = folder_path.trim_matches('/').to_string();
+    if trimmed.is_empty() {
+        return Err("Le nom de dossier ne peut pas être vide".to_owned());
+    }
+
+    let updated_at = now_seconds()?;
+    let mut doc_guard = state
+        .document
+        .lock()
+        .map_err(|_| "Coffre indisponible".to_owned())?;
+    let document = doc_guard
+        .as_mut()
+        .ok_or_else(|| "Coffre verrouille".to_owned())?;
+
+    if !document.custom_folders.contains(&trimmed) {
+        document.custom_folders.push(trimmed);
+        document.custom_folders.sort();
+        document.updated_at = updated_at;
+        persist_document(&state, document)?;
+    }
+    Ok(document.custom_folders.clone())
+}
+
+#[tauri::command]
+fn rename_custom_folder(
+    state: tauri::State<'_, AppState>,
+    old_path: String,
+    new_path: String,
+) -> Result<Vec<String>, String> {
+    let old_clean = old_path
+        .trim()
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_string();
+    let new_clean = new_path
+        .trim()
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_string();
+    if old_clean.is_empty() || new_clean.is_empty() {
+        return Err("Chemin de dossier invalide".to_owned());
+    }
+
+    let updated_at = now_seconds()?;
+    let mut doc_guard = state
+        .document
+        .lock()
+        .map_err(|_| "Coffre indisponible".to_owned())?;
+    let document = doc_guard
+        .as_mut()
+        .ok_or_else(|| "Coffre verrouille".to_owned())?;
+
+    let prefix = format!("{old_clean}/");
+
+    // Mettre à jour la liste des dossiers
+    for f in &mut document.custom_folders {
+        if *f == old_clean {
+            *f = new_clean.clone();
+        } else if f.starts_with(&prefix) {
+            *f = format!("{new_clean}/{}", &f[prefix.len()..]);
+        }
+    }
+    document.custom_folders.sort();
+    document.custom_folders.dedup();
+
+    // Mettre à jour les entrées
+    for e in &mut document.entries {
+        if let Some(ref folder) = e.folder {
+            if folder == &old_clean {
+                e.folder = Some(new_clean.clone());
+            } else if folder.starts_with(&prefix) {
+                e.folder = Some(format!("{new_clean}/{}", &folder[prefix.len()..]));
+            }
+        }
+    }
+
+    document.updated_at = updated_at;
+    persist_document(&state, document)?;
+    Ok(document.custom_folders.clone())
+}
+
+#[tauri::command]
+fn delete_custom_folder(
+    state: tauri::State<'_, AppState>,
+    folder_path: String,
+) -> Result<Vec<String>, String> {
+    let clean = folder_path
+        .trim()
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_string();
+    let prefix = format!("{clean}/");
+
+    let updated_at = now_seconds()?;
+    let mut doc_guard = state
+        .document
+        .lock()
+        .map_err(|_| "Coffre indisponible".to_owned())?;
+    let document = doc_guard
+        .as_mut()
+        .ok_or_else(|| "Coffre verrouille".to_owned())?;
+
+    document
+        .custom_folders
+        .retain(|f| f != &clean && !f.starts_with(&prefix));
+
+    // Dissocier les entrées qui étaient dans ce dossier ou sous-dossier
+    for e in &mut document.entries {
+        if let Some(ref folder) = e.folder {
+            if folder == &clean || folder.starts_with(&prefix) {
+                e.folder = None;
+            }
+        }
+    }
+
+    document.updated_at = updated_at;
+    persist_document(&state, document)?;
+    Ok(document.custom_folders.clone())
 }
 
 #[tauri::command]
@@ -480,6 +644,7 @@ fn sync_vault_with_file(
     Ok(OpenVaultResult {
         vault_locked: false,
         entries: local_doc.entries,
+        custom_folders: local_doc.custom_folders,
         vault_path: state
             .storage_path
             .lock()
@@ -727,7 +892,11 @@ pub fn run() {
             open_vault_directory,
             sync_vault_with_file,
             get_cloud_sync_presets,
-            pick_sync_file
+            pick_sync_file,
+            get_custom_folders,
+            create_custom_folder,
+            rename_custom_folder,
+            delete_custom_folder
         ])
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;

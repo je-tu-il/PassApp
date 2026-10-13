@@ -6,6 +6,17 @@ export const CURRENT_SCHEMA_VERSION = 1
 
 export type EntryCategory = 'Personnel' | 'Travail' | 'Finance' | 'Autre'
 
+export type ItemType = 'login' | 'note' | 'file'
+
+export interface VaultAttachment {
+  id: string
+  name: string
+  size: number
+  mime_type: string
+  data: string // Contenu encodé en base64
+  updated_at?: number
+}
+
 export interface VaultEntry {
   id: string
   title: string
@@ -17,12 +28,16 @@ export interface VaultEntry {
   category: EntryCategory
   favorite: boolean
   updated_at: number
+  folder?: string | null
+  item_type?: ItemType | null
+  attachments?: VaultAttachment[]
 }
 
 export interface VaultDocument {
   schema_version: number
   updated_at: number
   entries: VaultEntry[]
+  custom_folders?: string[]
 }
 
 export interface KdfParameters {

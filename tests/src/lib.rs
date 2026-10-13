@@ -7,9 +7,10 @@ mod tests {
     fn test_e2e_vault_lifecycle() {
         let master_password = b"SuperMasterPassword2026!";
 
-        // 1. Création d'un coffre initial avec plusieurs entrées
+        // 1. Création d'un coffre initial avec plusieurs entrées (identifiant, note sécurisée, fichier protégé)
         let mut document = VaultDocument::empty();
         document.updated_at = 1000;
+        document.custom_folders = vec!["Travail/Dev".to_owned(), "Personnel/Archives".to_owned()];
         document.entries.push(VaultEntry {
             id: "id-github".to_owned(),
             title: "GitHub".to_owned(),
@@ -21,6 +22,31 @@ mod tests {
             category: "Travail".to_owned(),
             favorite: true,
             updated_at: 1000,
+            folder: Some("Travail/Dev".to_owned()),
+            item_type: Some("login".to_owned()),
+            attachments: Vec::new(),
+        });
+        document.entries.push(VaultEntry {
+            id: "id-note-secu".to_owned(),
+            title: "Codes de récupération serveur".to_owned(),
+            username: "".to_owned(),
+            password: None,
+            url: None,
+            notes: Some("SSH Key fingerprint: SHA256:abc123xyz".to_owned()),
+            totp_secret: None,
+            category: "Travail".to_owned(),
+            favorite: false,
+            updated_at: 1000,
+            folder: Some("Travail/Dev/Serveurs".to_owned()),
+            item_type: Some("note".to_owned()),
+            attachments: vec![passapp_sync_core::VaultAttachment {
+                id: "att-ssh".to_owned(),
+                name: "id_ed25519.pub".to_owned(),
+                size: 256,
+                mime_type: "text/plain".to_owned(),
+                data: "c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSU9y...".to_owned(),
+                updated_at: 1000,
+            }],
         });
 
         // 2. Sérialisation et chiffrement
@@ -41,11 +67,20 @@ mod tests {
             serde_json::from_slice(&decrypted_bytes).expect("Désérialisation valide");
 
         assert_eq!(restored_doc.schema_version, 1);
-        assert_eq!(restored_doc.entries.len(), 1);
+        assert_eq!(restored_doc.entries.len(), 2);
         assert_eq!(restored_doc.entries[0].title, "GitHub");
         assert_eq!(
             restored_doc.entries[0].password.as_deref(),
             Some("ghp_secretToken123456")
+        );
+        assert_eq!(
+            restored_doc.entries[0].folder.as_deref(),
+            Some("Travail/Dev")
+        );
+        assert_eq!(restored_doc.entries[1].item_type.as_deref(), Some("note"));
+        assert_eq!(
+            restored_doc.entries[1].attachments[0].name,
+            "id_ed25519.pub"
         );
 
         // 5. Simulation d'un conflit multi-appareils (Local vs Remote)
@@ -69,11 +104,14 @@ mod tests {
             category: "Personnel".to_owned(),
             favorite: false,
             updated_at: 2500,
+            folder: Some("Personnel/Messagerie".to_owned()),
+            item_type: Some("login".to_owned()),
+            attachments: Vec::new(),
         });
 
         // 6. Fusion déterministe (CRDT-like)
         let merged = local.merge(&remote);
-        assert_eq!(merged.entries.len(), 2);
+        assert_eq!(merged.entries.len(), 3);
         // L'entrée la plus récente l'emporte ("GitHub Pro" à t=3000 bat "GitHub Enterprise" à t=2000)
         let github_entry = merged.entries.iter().find(|e| e.id == "id-github").unwrap();
         assert_eq!(github_entry.title, "GitHub Pro");
@@ -81,5 +119,6 @@ mod tests {
 
         let proton_entry = merged.entries.iter().find(|e| e.id == "id-proton").unwrap();
         assert_eq!(proton_entry.title, "ProtonMail");
+        assert_eq!(proton_entry.folder.as_deref(), Some("Personnel/Messagerie"));
     }
 }
