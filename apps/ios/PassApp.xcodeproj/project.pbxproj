@@ -13,6 +13,7 @@
 		1A000004 /* CryptoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000004 /* CryptoService.swift */; };
 		1A000005 /* BiometricAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000005 /* BiometricAuthService.swift */; };
 		1A000006 /* iCloudSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000006 /* iCloudSyncService.swift */; };
+		1A000007 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1B000008 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +25,7 @@
 		1B000005 /* BiometricAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuthService.swift; sourceTree = "<group>"; };
 		1B000006 /* iCloudSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iCloudSyncService.swift; sourceTree = "<group>"; };
 		1B000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1B000008 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -50,6 +52,7 @@
 			children = (
 				1B000001 /* PassAppApp.swift */,
 				1B000007 /* Info.plist */,
+				1B000008 /* PrivacyInfo.xcprivacy */,
 				1D000004 /* Views */,
 				1D000005 /* Models */,
 				1D000006 /* Services */,
@@ -148,6 +151,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1A000007 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

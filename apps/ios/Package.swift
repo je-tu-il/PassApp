@@ -18,7 +18,7 @@ let package = Package(
         .target(
             name: "PassAppCore",
             path: "PassApp",
-            exclude: ["PassAppApp.swift"]
+            exclude: ["PassAppApp.swift", "Info.plist", "PrivacyInfo.xcprivacy"]
         )
     ]
 )

@@ -34,9 +34,13 @@ public enum AccentTheme: String, CaseIterable, Identifiable {
 }
 
 public struct ContentView: View {
-    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding: Bool = false
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var vaultExists = LocalVault.exists
+    @State private var session: LocalVault.Session?
+    @State private var busy = false
+    @State private var saveError: String?
     @AppStorage("accentTheme") private var accentTheme: String = "emerald"
-    @AppStorage("biometricsEnabled") private var biometricsEnabled: Bool = true
+    @AppStorage("localVaultBiometricsV1") private var biometricsEnabled = false
 
     @State private var isLocked = true
     @State private var masterPassword = ""
@@ -100,16 +104,9 @@ public struct ContentView: View {
 
     public var body: some View {
         Group {
-            if !hasCompletedOnboarding {
-                OnboardingWizardView(
-                    themeColor: themeColor,
-                    onComplete: { _, initialPassword, enableBio in
-                        biometricsEnabled = enableBio
-                        hasCompletedOnboarding = true
-                        isLocked = false
-                        entries = [] // Coffre propre prêt à l'emploi
-                    }
-                )
+            if !vaultExists {
+                OnboardingWizardView(themeColor: themeColor, busy: busy, error: unlockError,
+                                     onComplete: createVault)
             } else {
                 NavigationView {
                     ZStack {
@@ -124,17 +121,11 @@ public struct ContentView: View {
                     .navigationTitle("PassApp")
                     .toolbar {
                         ToolbarItem(placement: .navigationBarLeading) {
-                            Button {
-                                withAnimation(.spring()) {
-                                    isLocked.toggle()
-                                    if isLocked {
-                                        masterPassword = ""
-                                        revealedPasswords.removeAll()
-                                    }
+                            if !isLocked {
+                                Button(action: lock) {
+                                    Image(systemName: "lock.open.fill").foregroundColor(themeColor)
                                 }
-                            } label: {
-                                Image(systemName: isLocked ? "lock.fill" : "lock.open.fill")
-                                    .foregroundColor(isLocked ? .secondary : themeColor)
+                                .accessibilityLabel("Verrouiller")
                             }
                         }
 
@@ -171,9 +162,7 @@ public struct ContentView: View {
                     }
                     .sheet(isPresented: $showAddSheet) {
                         AddEntryView(themeColor: themeColor) { newEntry in
-                            withAnimation {
-                                entries.insert(newEntry, at: 0)
-                            }
+                            save([newEntry] + entries)
                         }
                     }
                     .sheet(isPresented: $showSettingsSheet) {
@@ -185,31 +174,38 @@ public struct ContentView: View {
                                     showImportSheet = true
                                 }
                             },
-                            onLockNow: {
-                                showSettingsSheet = false
-                                withAnimation {
-                                    isLocked = true
-                                }
-                            }
+                            onLockNow: lock,
+                            biometricsEnabled: Binding(get: { biometricsEnabled }, set: setBiometrics)
                         )
                     }
                     .sheet(isPresented: $showImportSheet) {
                         ImportSheetView(themeColor: themeColor) { importedEntries in
-                            withAnimation {
-                                entries = importedEntries + entries
-                            }
+                            var existing = Set(entries.map(\.id))
+                            let additions = importedEntries.filter { existing.insert($0.id).inserted }
+                            save(additions + entries)
                         }
                     }
                 }
-                .onAppear {
-                    // ACTIVATION FACE ID IMMÉDIATE AU DÉMARRAGE
-                    if hasCompletedOnboarding && isLocked && biometricsEnabled {
-                        unlockWithFaceID()
-                    }
-                }
+
             }
         }
         .tint(themeColor)
+        .onChange(of: scenePhase) { phase in
+            if phase == .background { lock() }
+        }
+        .overlay {
+            if scenePhase != .active {
+                Color(UIColor.systemBackground).ignoresSafeArea().accessibilityHidden(true)
+            }
+        }
+        .alert("Coffre", isPresented: Binding(
+            get: { saveError != nil },
+            set: { if !$0 { saveError = nil } }
+        )) {
+            Button("OK", role: .cancel) { saveError = nil }
+        } message: {
+            Text(saveError ?? "")
+        }
     }
 
     // ÉCRAN DE VERROUILLAGE ÉLÉGANT
@@ -259,6 +255,7 @@ public struct ContentView: View {
                 }
                 .padding(.horizontal, 28)
 
+                if busy { ProgressView() }
                 if biometricsEnabled {
                     Button {
                         unlockWithFaceID()
@@ -363,7 +360,9 @@ public struct ContentView: View {
                         entryRow(entry)
                     }
                     .onDelete { indices in
-                        entries.remove(atOffsets: indices)
+                        let visible = filteredEntries
+                        let ids = Set(indices.compactMap { visible.indices.contains($0) ? visible[$0].id : nil })
+                        save(entries.filter { !ids.contains($0.id) })
                     }
                 }
                 .listStyle(InsetGroupedListStyle())
@@ -483,7 +482,7 @@ public struct ContentView: View {
                         .lineLimit(4)
                     Spacer()
                     Button {
-                        UIPasteboard.general.string = noteContent
+                        copyLocally(noteContent)
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         copiedId = entry.id
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -542,7 +541,7 @@ public struct ContentView: View {
                     .buttonStyle(BorderlessButtonStyle())
 
                     Button {
-                        UIPasteboard.general.string = password
+                        copyLocally(password)
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         copiedId = entry.id
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -594,294 +593,138 @@ public struct ContentView: View {
             .cornerRadius(10)
     }
 
-    private func unlockWithPassword() {
-        if masterPassword.count >= 4 {
-            withAnimation(.spring()) {
-                isLocked = false
-                masterPassword = ""
-                unlockError = nil
-            }
-        } else {
-            unlockError = "Mot de passe trop court"
+    private func createVault(password: String, enableBiometrics: Bool) {
+        guard !busy, password.count >= 12 else { return }
+        busy = true
+        unlockError = nil
+        Task { @MainActor in
+            defer { busy = false }
+            do {
+                let created = try await Task.detached(priority: .userInitiated) {
+                    try LocalVault.create(password: password)
+                }.value
+                vaultExists = true
+                guard scenePhase != .background else { return }
+                open(session: created, entries: [])
+                setBiometrics(enableBiometrics)
+            } catch { unlockError = error.localizedDescription }
         }
+    }
+
+    private func unlockWithPassword() {
+        guard !busy, !masterPassword.isEmpty else { return }
+        let supplied = masterPassword
+        masterPassword = ""
+        authenticate { try LocalVault.unlock(password: supplied) }
     }
 
     private func unlockWithFaceID() {
-        Task {
-            let result = await BiometricAuthService.shared.authenticateWithBiometrics(reason: "Déverrouiller votre coffre PassApp")
-            if case .success(true) = result {
-                await MainActor.run {
-                    withAnimation(.spring()) {
-                        isLocked = false
-                        unlockError = nil
-                    }
-                }
-            }
+        authenticate { try LocalVault.unlockUsingBiometrics() }
+    }
+
+    private func authenticate(_ operation: @escaping @Sendable () throws -> (LocalVault.Session, [VaultEntry])) {
+        guard !busy else { return }
+        busy = true
+        unlockError = nil
+        Task { @MainActor in
+            defer { busy = false }
+            do {
+                let (session, entries) = try await Task.detached(priority: .userInitiated) { try operation() }.value
+                guard scenePhase != .background else { return }
+                open(session: session, entries: entries)
+            } catch { unlockError = error.localizedDescription }
         }
+    }
+
+    private func open(session: LocalVault.Session, entries: [VaultEntry]) {
+        self.session = session
+        self.entries = entries
+        unlockError = nil
+        isLocked = false
+    }
+
+    private func lock() {
+        isLocked = true
+        session = nil
+        entries.removeAll()
+        masterPassword = ""
+        searchText = ""
+        selectedFolder = nil
+        revealedPasswords.removeAll()
+        copiedId = nil
+        showAddSheet = false
+        showImportSheet = false
+        showSettingsSheet = false
+    }
+
+    private func save(_ updated: [VaultEntry]) {
+        guard let session, !isLocked else { return }
+        do {
+            try LocalVault.save(updated, session: session)
+            entries = updated
+        } catch {
+            saveError = "Impossible d’enregistrer cette modification. Vérifiez l’espace disponible."
+        }
+    }
+
+    private func setBiometrics(_ enabled: Bool) {
+        guard enabled else {
+            LocalVault.removeBiometrics()
+            biometricsEnabled = false
+            return
+        }
+        guard let session else { return }
+        do {
+            try LocalVault.enableBiometrics(for: session)
+            biometricsEnabled = true
+        } catch {
+            biometricsEnabled = false
+            saveError = error.localizedDescription
+        }
+    }
+
+    private func copyLocally(_ secret: String) {
+        UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: secret]],
+                                     options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(30)])
     }
 }
 
-// -------------------------------------------------------------
-// ASSISTANT D'INITIALISATION INITIAL (ONBOARDING)
-// -------------------------------------------------------------
-struct OnboardingWizardView: View {
-    var themeColor: Color
-    var onComplete: (String, String, Bool) -> Void
-
-    @State private var step = 1
-    @State private var masterPassword = ""
-    @State private var confirmPassword = ""
-    @State private var generatedWords: [String] = []
-    @State private var copiedPhrase = false
-    @State private var enableBiometrics = true
-
-    // Dictionnaire de 24 mots mnémoniques pour la phrase secrète
-    private let wordPool = [
-        "aurore", "bastion", "boussole", "cristal", "diamant", "eclat",
-        "etoile", "flamme", "horizon", "miroir", "navire", "ombre",
-        "oracle", "refuge", "sentier", "silence", "sommet", "titan",
-        "vallee", "vigie", "zodiaque", "zenith", "comete", "faucon"
-    ]
+private struct OnboardingWizardView: View {
+    let themeColor: Color
+    let busy: Bool
+    let error: String?
+    let onComplete: (String, Bool) -> Void
+    @State private var password = ""
+    @State private var confirmation = ""
+    @State private var enableBiometrics = false
 
     var body: some View {
-        NavigationView {
-            ZStack {
-                Color(UIColor.systemGroupedBackground).ignoresSafeArea()
-
-                VStack(spacing: 24) {
-                    // INDICATEUR D'ÉTAPES
-                    HStack(spacing: 8) {
-                        ForEach(1...3, id: \.self) { s in
-                            Capsule()
-                                .fill(s <= step ? themeColor : Color.secondary.opacity(0.2))
-                                .frame(height: 4)
-                        }
-                    }
-                    .padding(.horizontal, 32)
-                    .padding(.top, 16)
-
-                    if step == 1 {
-                        welcomeStepView
-                    } else if step == 2 {
-                        passwordStepView
-                    } else {
-                        recoveryPhraseStepView
-                    }
-
-                    Spacer()
-
-                    // BOUTONS D'ACTION
-                    VStack(spacing: 12) {
-                        Button {
-                            if step == 1 {
-                                step = 2
-                            } else if step == 2 {
-                                generateRecoveryWords()
-                                step = 3
-                            } else {
-                                onComplete(generatedWords.joined(separator: " "), masterPassword, enableBiometrics)
-                            }
-                        } label: {
-                            Text(step == 3 ? "Initialiser et ouvrir mon coffre" : "Continuer")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 15)
-                                .background(canContinue ? themeColor : Color.secondary.opacity(0.3))
-                                .foregroundColor(.white)
-                                .cornerRadius(12)
-                        }
-                        .disabled(!canContinue)
-
-                        if step > 1 {
-                            Button("Retour") {
-                                withAnimation { step -= 1 }
-                            }
-                            .foregroundColor(.secondary)
-                            .font(.subheadline)
-                        }
-                    }
-                    .padding(.horizontal, 28)
-                    .padding(.bottom, 24)
+        NavigationStack {
+            Form {
+                Section {
+                    SecureField("Mot de passe principal", text: $password)
+                        .textContentType(.newPassword)
+                    SecureField("Confirmer le mot de passe", text: $confirmation)
+                        .textContentType(.newPassword)
+                    Toggle("Déverrouillage biométrique", isOn: $enableBiometrics)
+                } header: {
+                    Text("Sécurité")
+                } footer: {
+                    Text("Utilisez au moins 12 caractères et gardez ce mot de passe dans un endroit sûr.")
                 }
-            }
-            .navigationBarHidden(true)
-        }
-    }
-
-    private var canContinue: Bool {
-        if step == 1 { return true }
-        if step == 2 {
-            return masterPassword.count >= 8 && masterPassword == confirmPassword
-        }
-        return true
-    }
-
-    private func generateRecoveryWords() {
-        if generatedWords.isEmpty {
-            generatedWords = Array(wordPool.shuffled().prefix(12))
-        }
-    }
-
-    // ÉTAPE 1 : BIENVENUE & EXPLICATIONS
-    private var welcomeStepView: some View {
-        VStack(spacing: 20) {
-            ZStack {
-                Circle()
-                    .fill(themeColor.opacity(0.12))
-                    .frame(width: 100, height: 100)
-                Image(systemName: "lock.shield.fill")
-                    .font(.system(size: 48))
-                    .foregroundColor(themeColor)
-            }
-            .padding(.top, 20)
-
-            Text("Bienvenue sur PassApp")
-                .font(.title2.bold())
-
-            Text("Votre coffre-fort numérique souverain.\nChiffrement de niveau militaire, directement sur votre appareil.")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
-
-            VStack(alignment: .leading, spacing: 16) {
-                featureBullet(
-                    icon: "lock.fill",
-                    title: "Chiffrement Zero-Knowledge",
-                    desc: "Argon2id + AES-256-GCM. Vous seul détenez les clés de déchiffrement."
-                )
-                featureBullet(
-                    icon: "iphone.circle.fill",
-                    title: "100% Local & Privé",
-                    desc: "Aucun serveur tiers, aucun abonnement, aucune donnée transmise."
-                )
-                featureBullet(
-                    icon: "faceid",
-                    title: "Accès instantané Face ID",
-                    desc: "Déverrouillez vos identifiants d'un simple regard dès l'ouverture."
-                )
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 12)
-        }
-    }
-
-    private func featureBullet(icon: String, title: String, desc: String) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundColor(themeColor)
-                .frame(width: 28)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline.bold())
-                Text(desc).font(.caption).foregroundColor(.secondary)
-            }
-        }
-    }
-
-    // ÉTAPE 2 : DÉFINITION DU MOT DE PASSE MAÎTRE
-    private var passwordStepView: some View {
-        VStack(spacing: 20) {
-            Text("Mot de passe maître")
-                .font(.title2.bold())
-                .padding(.top, 20)
-
-            Text("Ce mot de passe sert à déchiffrer votre coffre. Choisissez-en un mémorable et robuste.")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 28)
-
-            VStack(spacing: 12) {
-                SecureField("Mot de passe maître (8 caractères min.)", text: $masterPassword)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-
-                SecureField("Confirmer le mot de passe", text: $confirmPassword)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-
-                if !confirmPassword.isEmpty && masterPassword != confirmPassword {
-                    Text("Les mots de passe ne correspondent pas.")
-                        .font(.caption)
-                        .foregroundColor(.red)
+                if let error {
+                    Text(error).foregroundStyle(.red)
                 }
-
-                // TOGGLE FACE ID DIRECT
-                Toggle(isOn: $enableBiometrics) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "faceid")
-                            .foregroundColor(themeColor)
-                        Text("Activer Face ID dès le démarrage")
-                            .font(.footnote)
-                    }
-                }
-                .padding(.top, 8)
+                Button("Créer mon coffre") { onComplete(password, enableBiometrics) }
+                    .disabled(busy || password.count < 12 || password != confirmation)
+                if busy { ProgressView() }
             }
-            .padding(.horizontal, 28)
-            .padding(.top, 10)
-        }
-    }
-
-    // ÉTAPE 3 : PHRASE SECRÈTE DE SECOURS (12 MOTS)
-    private var recoveryPhraseStepView: some View {
-        VStack(spacing: 16) {
-            Text("Phrase secrète de récupération")
-                .font(.title3.bold())
-                .padding(.top, 10)
-
-            Text("En cas d'oubli de votre mot de passe, ces 12 mots permettent de recouvrer l'accès à vos données.")
-                .font(.footnote)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
-
-            // GRILLE DES 12 MOTS
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                ForEach(Array(generatedWords.enumerated()), id: \.offset) { index, word in
-                    HStack {
-                        Text("\(index + 1).")
-                            .font(.caption2.bold())
-                            .foregroundColor(.secondary)
-                            .frame(width: 20, alignment: .trailing)
-                        Text(word)
-                            .font(.system(.footnote, design: .monospaced).bold())
-                            .foregroundColor(.primary)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(Color(UIColor.secondarySystemGroupedBackground))
-                    .cornerRadius(8)
-                }
-            }
-            .padding(.horizontal, 24)
-
-            Button {
-                let phrase = generatedWords.joined(separator: " ")
-                UIPasteboard.general.string = phrase
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                withAnimation { copiedPhrase = true }
-            } label: {
-                HStack {
-                    Image(systemName: copiedPhrase ? "checkmark" : "doc.on.doc")
-                    Text(copiedPhrase ? "Phrase secrète copiée !" : "Copier la phrase de récupération")
-                }
-                .font(.footnote.bold())
-                .foregroundColor(copiedPhrase ? .green : themeColor)
-            }
-            .padding(.top, 6)
-
-            Text("⚠️ PassApp ne conserve pas de copie. Notez cette phrase dans un lieu sécurisé.")
-                .font(.caption2)
-                .foregroundColor(.orange)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
+            .navigationTitle("Créer un coffre")
+            .tint(themeColor)
         }
     }
 }
 
-// -------------------------------------------------------------
-// FICHE DE RÉGLAGES & PERSONNALISATION
-// -------------------------------------------------------------
 struct SettingsSheetView: View {
     @Environment(\.dismiss) var dismiss
     var themeColor: Color
@@ -889,7 +732,7 @@ struct SettingsSheetView: View {
     var onLockNow: () -> Void
 
     @AppStorage("accentTheme") private var accentTheme: String = "emerald"
-    @AppStorage("biometricsEnabled") private var biometricsEnabled: Bool = true
+    @Binding var biometricsEnabled: Bool
 
     var body: some View {
         NavigationView {
@@ -905,7 +748,7 @@ struct SettingsSheetView: View {
                         }
                     }
 
-                    Toggle("Déverrouillage automatique Face ID", isOn: $biometricsEnabled)
+                    Toggle("Déverrouillage biométrique", isOn: $biometricsEnabled)
                 }
 
                 Section(header: Text("Importation de données")) {
@@ -921,36 +764,9 @@ struct SettingsSheetView: View {
                     }
                 }
 
-                Section(header: Text("Synchronisation Multi-Appareils")) {
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "icloud.fill")
-                            .foregroundColor(.blue)
-                            .font(.title3)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("iCloud Drive & Réseau local (CRDT)")
-                                .font(.subheadline.bold())
-                            Text("Votre coffre PassApp est compatible avec la synchronisation iCloud Drive et les dossiers partagés de votre PC/Mac sans aucun serveur tiers.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                Section(header: Text("Sécurité & Phrase de secours")) {
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "shield.lefthalf.filled")
-                            .foregroundColor(themeColor)
-                            .font(.title3)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Phrase de secours scellée (Zero-Knowledge)")
-                                .font(.subheadline.bold())
-                            Text("Votre phrase de récupération à 12 mots a été générée lors de la configuration initiale. Pour préserver l'inviolabilité absolue de votre coffre, elle n'est pas conservée en clair et ne peut pas être réaffichée ici.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 4)
+                Section("Sécurité") {
+                    Text("Ce coffre est chiffré et enregistré sur l’iPhone.")
+                        .foregroundStyle(.secondary)
 
                     Button("Verrouiller le coffre maintenant") {
                         dismiss()
@@ -959,9 +775,6 @@ struct SettingsSheetView: View {
                     .foregroundColor(.red)
                 }
 
-                Section(footer: Text("PassApp v0.1.0 • Chiffrement local Zero-Knowledge")) {
-                    EmptyView()
-                }
             }
             .navigationTitle("Réglages")
             .navigationBarItems(trailing: Button("Terminé") { dismiss() })

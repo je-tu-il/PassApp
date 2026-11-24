@@ -1,6 +1,6 @@
 import Foundation
 
-public struct VaultAttachment: Identifiable, Codable, Equatable {
+public struct VaultAttachment: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public var name: String
     public var size: Int
@@ -44,7 +44,7 @@ public struct VaultAttachment: Identifiable, Codable, Equatable {
     }
 }
 
-public struct VaultEntry: Identifiable, Codable, Equatable {
+public struct VaultEntry: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public var title: String
     public var username: String
