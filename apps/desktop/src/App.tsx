@@ -1361,7 +1361,7 @@ INSTRUCTIONS DE SÉCURITÉ :
           {/* ÉTAPE 1 : BIENVENUE & PRINCIPES */}
           {onboardingStep === 1 && (
             <div className="onboarding-body animate-fade">
-              <h2>Bienvenue dans votre coffre-fort numérique</h2>
+              <h1 style={{ fontSize: '1.65rem', margin: '0 0 8px' }}>Bienvenue dans votre coffre-fort numérique</h1>
               <p className="onboarding-intro">
                 PassApp sécurise tous vos identifiants sans abonnement, sans tracking, et sous votre contrôle exclusif.
               </p>
