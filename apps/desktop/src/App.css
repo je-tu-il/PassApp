@@ -20,8 +20,8 @@
   --accent-shadow: rgba(224, 109, 69, 0.28);
 }
 [data-accent="sapphire"] {
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
+  --accent: #315e79;
+  --accent-hover: #25495d;
   --accent-soft: rgba(37, 99, 235, 0.12);
   --accent-shadow: rgba(37, 99, 235, 0.28);
 }
@@ -40,18 +40,18 @@
 
 /* THÈME SOMBRE (DÉFAUT) */
 :root, [data-theme="dark"] {
-  --bg-app: #121818;
-  --bg-sidebar: #172020;
-  --bg-panel: #141c1c;
-  --bg-card: #1c2727;
-  --bg-input: #1f2c2c;
-  --border: #293838;
+  --bg-app: #212723;
+  --bg-sidebar: #29322b;
+  --bg-panel: #28312b;
+  --bg-card: #303932;
+  --bg-input: #374238;
+  --border: #576359;
   --border-subtle: #202d2d;
-  --text-main: #f0f5f2;
-  --text-muted: #8d9e96;
-  --text-dim: #5c6b64;
+  --text-main: #fffaf0;
+  --text-muted: #dbd4c4;
+  --text-dim: #b5bba8;
   --modal-backdrop: rgba(10, 14, 14, 0.78);
-  --toast-bg: #1f2c2c;
+  --toast-bg: #374238;
 }
 
 /* THÈME CLAIR */
